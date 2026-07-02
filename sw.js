@@ -1,4 +1,4 @@
-const C='fin-v1';
+const C='fin-v2';
 self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(['./','./index.html','./icon-192.png','./manifest.json'])).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(clients.claim())});
 self.addEventListener('fetch',e=>{
