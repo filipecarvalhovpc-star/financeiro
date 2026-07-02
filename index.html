@@ -106,13 +106,23 @@ summary{cursor:pointer;font-weight:700}
 .modal-bg .card{max-width:560px;width:100%;margin:0;max-height:90vh;overflow:auto}
 @media print{
   .modal-bg{display:none!important}
-  #ptr,.no-print,nav,header{display:none!important}
+  #ptr,#fab,.no-print,nav,header{display:none!important}
   body{background:#fff;color:#000;font-size:12px}
   .card{border:none;box-shadow:none;padding:0}
   main{max-width:none;padding:0}
   th,td{padding:3px 6px}
 }
-@media(max-width:640px){ main{padding:12px} .kpi .val{font-size:19px} nav{padding:10px 12px;gap:6px} nav button{padding:8px 13px;font-size:13px} }
+.nvi{margin-right:6px} #fab{display:none}
+@media(max-width:640px){
+  main{padding:12px;padding-bottom:84px}
+  .kpi .val{font-size:19px}
+  nav{position:fixed;left:0;right:0;bottom:0;top:auto;border-top:1px solid var(--line);border-bottom:none;justify-content:space-around;gap:2px;padding:6px 2px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -6px 20px rgba(0,0,0,.28);flex-wrap:nowrap}
+  nav button{flex:1 1 0;min-width:0;border:none;background:transparent;border-radius:12px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 1px;font-size:10px;font-weight:600;color:var(--muted);box-shadow:none}
+  nav button .nvi{margin-right:0;font-size:19px;line-height:1}
+  nav button .nvt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  nav button.on{background:transparent;color:var(--gold);font-weight:800;box-shadow:none}
+  #fab{display:flex;position:fixed;right:16px;bottom:78px;width:56px;height:56px;border-radius:50%;background:linear-gradient(180deg,var(--gold),var(--gold-dk));color:#1a1205;border:none;font-size:30px;line-height:1;align-items:center;justify-content:center;box-shadow:0 8px 22px rgba(212,175,55,.5);z-index:21;cursor:pointer}
+}
 </style>
 </head>
 <body data-theme="dark">
@@ -139,20 +149,19 @@ summary{cursor:pointer;font-weight:700}
   <button class="icon no-print" id="themeBtn" title="Tema claro/escuro">🌓</button>
 </header>
 <nav>
-  <button data-pg="lancar" class="on">✍️ Lançar</button>
-  <button data-pg="mov">📋 Movimentos</button>
-  <button data-pg="dashI">⛪ Igreja</button>
-  <button data-pg="dashP">🏠 Pessoal</button>
-  <button data-pg="rel">📊 Relatórios</button>
-  <button data-pg="dados">⚙️ Dados</button>
+  <button data-pg="lancar" class="on"><span class="nvi">✍️</span><span class="nvt">Lançar</span></button>
+  <button data-pg="mov"><span class="nvi">📋</span><span class="nvt">Movimentos</span></button>
+  <button data-pg="dashI"><span class="nvi">⛪</span><span class="nvt">Igreja</span></button>
+  <button data-pg="dashP"><span class="nvi">🏠</span><span class="nvt">Pessoal</span></button>
+  <button data-pg="rel"><span class="nvi">📊</span><span class="nvt">Relatórios</span></button>
+  <button data-pg="dados"><span class="nvi">⚙️</span><span class="nvt">Dados</span></button>
 </nav>
 <main>
 
 <section class="page on" id="pg-lancar">
   <div class="card">
-    <h2>Lançamento rápido — escreva como numa conversa</h2>
-    <p class="hint">Um lançamento por linha, com o valor no fim. Formato: <code>dízimo (nome) (valor)</code> · <code>mercado (valor)</code> · <code>oferta culto domingo (valor)</code> · <code>igreja aluguel (valor) (data)</code> · <code>pró-labore (valor)</code> · <code>igreja gasolina (valor)</code> — despesa da igreja · <code>gasolina (valor)</code> — pessoal · <code>entrada pessoal externa (valor) (quem)</code> — entrada sua que NÃO sai da igreja. Sem data = hoje. Você confere e ajusta tudo antes de salvar.</p>
-    <textarea id="qin" placeholder="Escreva aqui um lançamento por linha…"></textarea>
+    <h2>Lançamento rápido</h2>
+    <textarea id="qin" placeholder="Escreva um lançamento por linha, com o valor no fim… (ex.: dízimo Carlos 150)"></textarea>
     <div class="row">
       <button class="btn" id="btnParse">Analisar</button>
       <label class="btn sec" style="display:inline-block">📷 Fotografar nota/recibo<input type="file" id="ocrCam" accept="image/*" capture="environment" style="display:none"></label>
@@ -168,7 +177,7 @@ summary{cursor:pointer;font-weight:700}
     <div class="row">
       <input type="text" id="ocrNote" placeholder="Do que se trata? (opcional — será analisado junto com a imagem)" style="flex:1;min-width:230px">
     </div>
-    <p class="hint" id="ocrMsg">Você também pode COLAR um print aqui (Ctrl+V no PC; no iPhone: toque e segure → Colar). Prints de extrato ou de relatório com vários valores viram vários lançamentos de uma vez — você completa e confirma. A leitura precisa de internet na primeira vez.</p>
+    <p class="hint" id="ocrMsg"></p>
     <div id="preview"></div>
   </div>
   <div class="card">
@@ -225,7 +234,7 @@ summary{cursor:pointer;font-weight:700}
   </div>
   <div class="card">
     <h2>📌 Pendências (contas em aberto)</h2>
-    <p class="hint">Os valores daqui <b>não entram</b> nos saldos, gráficos e relatórios. Para abater: lance o gasto normalmente na aba Lançar terminando com "pendência (nome)" — ex.: <code>pix 200 pendência cartão</code> — ou use o botão ✔ na linha.</p>
+    <p class="hint">Não entram em saldos nem relatórios. Para abater, use ✔ na linha ou termine o lançamento com "pendência (nome)".</p>
     <textarea id="pendIn" placeholder="Uma pendência por linha — ex.: igreja aluguel atrasado 800&#10;cartão nubank 1.500" style="min-height:60px"></textarea>
     <div class="row no-print">
       <button class="btn" id="btnPend">Adicionar pendências</button>
@@ -342,6 +351,8 @@ function responder(e){
 </section>
 
 </main>
+
+<button id="fab" title="Novo lançamento">+</button>
 
 <div id="modal" class="modal-bg" onclick="if(event.target===this)closeModal()">
   <div class="card">
@@ -1373,6 +1384,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.body.dataset.theme=S.cfg.theme||'dark';
   document.getElementById('themeBtn').onclick=()=>{S.cfg.theme=document.body.dataset.theme=(document.body.dataset.theme==='light'?'dark':'light');save();};
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.pg));
+  const fab=document.getElementById('fab');if(fab)fab.onclick=()=>show('lancar');
   document.getElementById('btnParse').onclick=()=>{
     const lines=document.getElementById('qin').value.split('\n');
     PREV=lines.map(parseLine).filter(Boolean);
