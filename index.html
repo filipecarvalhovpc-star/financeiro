@@ -539,6 +539,8 @@ function renderMov(){
 function delTx(id){
   const tx=S.tx.find(x=>x.id===id);if(!tx)return;
   if(!confirm('Excluir "'+tx.n+'" ('+fmt(tx.v)+')?'))return;
+  S.del=S.del||[];S.del.push(id);
+  S.tx.filter(x=>x.lk===id).forEach(x=>S.del.push(x.id));
   S.tx=S.tx.filter(x=>x.id!==id&&x.lk!==id);save();
 }
 
@@ -589,7 +591,7 @@ function renderComp(){
    <td class="no-print"><button class="icon" onclick="delComp('${c.id}')">🗑️</button></td></tr>`).join('')+
    `<tr class="total"><td colspan="3">TOTAL</td><td class="num">${fmt(S.comp.reduce((x,c)=>x+(+c.vp||0),0))}</td><td class="num">${fmt(S.comp.reduce((x,c)=>x+(+c.vt||0),0))}</td><td colspan="2"></td></tr>`;
 }
-function delComp(id){if(confirm('Remover compromisso?')){S.comp=S.comp.filter(c=>c.id!==id);save();}}
+function delComp(id){if(confirm('Remover compromisso?')){S.del=S.del||[];S.del.push(id);S.comp=S.comp.filter(c=>c.id!==id);save();}}
 
 /*==== RELATÓRIOS ====*/
 function relHead(titulo,sub){return `<div class="rep-head"><h2>${titulo}</h2><div class="sub">${sub}</div><div class="sub">Gerado em ${new Date().toLocaleDateString('pt-BR')}</div></div>`;}
@@ -1014,6 +1016,24 @@ async function cloudPush(){
   }catch(e){syncInd('☁️ sem conexão — dados salvos neste aparelho');}
 }
 function schedulePush(){if(!syncCfg())return;clearTimeout(SYNC_TIMER);SYNC_TIMER=setTimeout(cloudPush,1200);}
+/* Fusão inteligente: une lançamentos deste aparelho com os da nuvem (por id).
+   Exclusões viajam numa lista (del) para não "ressuscitarem" no outro aparelho. */
+function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp||[],alias:s.alias||{},del:s.del||[]});}
+function mergeStates(loc,rem){
+  const del=new Set([...(loc.del||[]),...(rem.del||[])]);
+  const j={};
+  (rem.tx||[]).forEach(t=>{if(!del.has(t.id))j[t.id]=t;});
+  (loc.tx||[]).forEach(t=>{if(!del.has(t.id))j[t.id]=t;});
+  const tx=Object.values(j).sort((a,b)=>String(a.d).localeCompare(String(b.d)));
+  const pj={};
+  (rem.pend||[]).forEach(p=>{if(!del.has(p.id))pj[p.id]=p;});
+  (loc.pend||[]).forEach(p=>{if(!del.has(p.id)){const r=pj[p.id];pj[p.id]=r?{...p,pago:Math.max(p.pago||0,r.pago||0)}:p;}});
+  const cj={};
+  (rem.comp||[]).forEach(c=>{if(!del.has(c.id))cj[c.id]=c;});
+  (loc.comp||[]).forEach(c=>{if(!del.has(c.id))cj[c.id]=c;});
+  return {cfg:loc.cfg,tx,pend:Object.values(pj),comp:Object.values(cj),
+    alias:Object.assign({},rem.alias||{},loc.alias||{}),del:[...del],saved:new Date().toISOString()};
+}
 async function cloudPull(silent){
   const c=syncCfg();if(!c)return;
   try{
@@ -1024,13 +1044,16 @@ async function cloudPull(silent){
     const remote=JSON.parse(t);
     if(remote&&remote.ok===false)throw new Error(remote.error);
     if(remote&&remote.tx){
-      if((remote.saved||'')>(S.saved||'')){
-        remote.cfg=remote.cfg||{};remote.cfg.sync=S.cfg.sync;
-        S=remote;
+      const locSnap=snapSync(S),remSnap=snapSync(remote);
+      if(locSnap!==remSnap){
+        const merged=mergeStates(S,remote);
+        const newSnap=snapSync(merged);
+        S=merged;
         try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
-        refresh();syncInd('☁️ atualizado da nuvem');
-      }else if((S.saved||'')>(remote.saved||'')){cloudPush();}
-      else syncInd('☁️ sincronizado');
+        if(newSnap!==locSnap)refresh();
+        if(newSnap!==remSnap)cloudPush();
+        else syncInd('☁️ sincronizado');
+      }else syncInd('☁️ sincronizado');
     }else{cloudPush();}
   }catch(e){syncInd('☁️ sem conexão — usando os dados deste aparelho');}
 }
@@ -1094,7 +1117,7 @@ function abatePendByName(nome,v){
   const p=S.pend.find(x=>(x.total-x.pago)>0&&x.desc.toLowerCase().includes(alvo))||S.pend.find(x=>x.desc.toLowerCase().includes(alvo));
   if(p)p.pago+=v;
 }
-function delPend(id){if(confirm('Excluir pendência?')){pendGuard();S.pend=S.pend.filter(p=>p.id!==id);save();}}
+function delPend(id){if(confirm('Excluir pendência?')){pendGuard();S.del=S.del||[];S.del.push(id);S.pend=S.pend.filter(p=>p.id!==id);save();}}
 
 /*==== CONSELHEIROS FINANCEIROS (Igreja e Pessoal) ====*/
 function renderConselheiro(){
@@ -1247,6 +1270,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   ['click','keydown','touchstart','input'].forEach(ev=>document.addEventListener(ev,regAct,true));
   setInterval(tickSess,1000);
   setInterval(()=>{if(!isLocked()&&syncCfg())cloudPull(true);},30000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&syncCfg())cloudPull(true);});
   document.getElementById('refreshBtn').onclick=()=>cloudPull();
   document.getElementById('lockBtn').onclick=lockNow;
   // pendências e memória de nomes
@@ -1379,7 +1403,10 @@ document.addEventListener('DOMContentLoaded',()=>{
   };
   document.getElementById('btnReset').onclick=()=>{
     if(confirm('Apagar TODOS os dados? Exporte um backup antes!')&&confirm('Tem certeza? Esta ação não pode ser desfeita.')){
-      localStorage.removeItem(KEY);location.reload();
+      const ids=[...S.tx.map(x=>x.id),...(S.pend||[]).map(x=>x.id),...(S.comp||[]).map(x=>x.id)];
+      S={cfg:S.cfg,tx:[],comp:[],pend:[],alias:{},del:[...(S.del||[]),...ids],saved:null};
+      save();
+      setTimeout(()=>location.reload(),1800);
     }};
   refresh();
 });
