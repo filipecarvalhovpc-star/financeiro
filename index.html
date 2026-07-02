@@ -144,7 +144,10 @@ summary{cursor:pointer;font-weight:600}
       <label class="btn sec" style="display:inline-block">🖼️ Enviar imagem de recibo<input type="file" id="ocrFile" accept="image/*" multiple style="display:none"></label>
       <span class="hint" id="parseMsg"></span>
     </div>
-    <p class="hint" id="ocrMsg">A leitura de recibos por foto precisa de internet na primeira vez (o leitor fica guardado depois). O sistema extrai valor, data e estabelecimento e sugere a categoria — você sempre confirma antes de salvar.</p>
+    <div class="row">
+      <input type="text" id="ocrNote" placeholder="Do que se trata? (opcional — será analisado junto com a imagem)" style="flex:1;min-width:230px">
+    </div>
+    <p class="hint" id="ocrMsg">Você também pode COLAR um print aqui (Ctrl+V no PC; no iPhone: toque e segure → Colar). Prints de extrato ou de relatório com vários valores viram vários lançamentos de uma vez — você completa e confirma. A leitura precisa de internet na primeira vez.</p>
     <div id="preview"></div>
   </div>
   <div class="card">
@@ -185,6 +188,7 @@ summary{cursor:pointer;font-weight:600}
 
 <section class="page" id="pg-dashP">
   <div class="row no-print"><label>Mês: <input type="month" id="mP"></label></div>
+  <div id="conselheiro"></div>
   <div id="dashP"></div>
   <div class="card" id="compCard">
     <h2>Compromissos em aberto (parcelas)</h2>
@@ -198,6 +202,16 @@ summary{cursor:pointer;font-weight:600}
       <input type="text" id="cp-obs" placeholder="Obs" style="width:110px">
       <button class="btn" id="btnComp">Adicionar</button>
     </div>
+  </div>
+  <div class="card">
+    <h2>📌 Pendências (contas em aberto)</h2>
+    <p class="hint">Os valores daqui <b>não entram</b> nos saldos, gráficos e relatórios. Para abater: lance o gasto normalmente na aba Lançar terminando com "pendência (nome)" — ex.: <code>pix 200 pendência cartão</code> — ou use o botão ✔ na linha.</p>
+    <textarea id="pendIn" placeholder="Uma pendência por linha — ex.: igreja aluguel atrasado 800&#10;cartão nubank 1.500" style="min-height:60px"></textarea>
+    <div class="row no-print">
+      <button class="btn" id="btnPend">Adicionar pendências</button>
+      <span class="hint">Comece com "igreja" para pendência da igreja; sem prefixo = pessoal.</span>
+    </div>
+    <div id="pendList"></div>
   </div>
 </section>
 
@@ -381,13 +395,23 @@ function parseLine(line){
   let area=null;
   if(/^igreja[:\s]/i.test(txt)){area='I';txt=txt.replace(/^igreja[:\s]+/i,'');}
   if(/^pessoal[:\s]/i.test(txt)){area='P';txt=txt.replace(/^pessoal[:\s]+/i,'');}
+  // referência a pendência ("... pendência cartão")
+  let pendRef=null;
+  const pm=txt.match(/\b(?:ref(?:erente)?\.?\s*)?(?:[aà]o?\s+)?pend[êe]ncia\s+(.{2,40})$/i);
+  if(pm){pendRef=pm[1].trim();txt=txt.slice(0,pm.index);}
   // data
   let d=new Date();let dstr=null;
   if(/\bontem\b/i.test(txt)){d.setDate(d.getDate()-1);txt=txt.replace(/\bontem\b/i,'');}
   if(/\bhoje\b/i.test(txt)){txt=txt.replace(/\bhoje\b/i,'');}
-  const dm=txt.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
-  if(dm){let y=dm[3]?(dm[3].length===2?'20'+dm[3]:dm[3]):String(d.getFullYear());
-    dstr=y+'-'+dm[2].padStart(2,'0')+'-'+dm[1].padStart(2,'0');txt=txt.replace(dm[0],'');}
+  const dm=txt.match(/\b(\d{1,2})[\/\.\-](\d{1,2})(?:[\/\.\-](\d{2,4}))?(?!\d)/);
+  if(dm&&+dm[2]>=1&&+dm[2]<=12&&+dm[1]>=1&&+dm[1]<=31){
+    let y=dm[3]?(dm[3].length===2?'20'+dm[3]:dm[3]):String(d.getFullYear());
+    dstr=y+'-'+String(+dm[2]).padStart(2,'0')+'-'+String(+dm[1]).padStart(2,'0');txt=txt.replace(dm[0],'');}
+  if(!dstr){
+    const MABR={jan:1,fev:2,mar:3,abr:4,mai:5,jun:6,jul:7,ago:8,set:9,out:10,nov:11,dez:12};
+    const dn=txt.match(/\b(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zçâ-ú]*\b/i);
+    if(dn){dstr=d.getFullYear()+'-'+String(MABR[dn[2].toLowerCase()]).padStart(2,'0')+'-'+String(+dn[1]).padStart(2,'0');txt=txt.replace(dn[0],'');}
+  }
   if(!dstr)dstr=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   // valor: último número da linha
   const nums=[...txt.matchAll(/-?\d+(?:\.\d{3})+(?:,\d{1,2})?|-?\d+(?:[.,]\d{1,2})?/g)];
@@ -401,9 +425,11 @@ function parseLine(line){
     if(!CATS[a][t][c]){c=t==='E'?(a==='I'?'Entradas Especiais':'Ofertas Especiais'):(a==='I'?'Gastos Igreja':'Outros');sc='';}
   }}
   let n=txt.replace(/\bR\$\s*/gi,'').replace(/\s{2,}/g,' ').replace(/^[\s\-–,.:]+|[\s\-–,.:]+$/g,'').trim();
+  // a palavra da categoria não faz parte do nome ("Dízimo Carlice Bastos" → "Carlice Bastos")
+  n=n.replace(/^(d[ií]zimos?|repasse|benef[ií]cios?|caridade|doa[çc][ãa]o|ofertas?)\s+(?:de\s+|da\s+|do\s+)?/i,'').trim();
   if(n)n=n.charAt(0).toUpperCase()+n.slice(1);
   if(!n)n=c;
-  return {d:dstr,a,t,c,s:sc,n,v:val};
+  return {d:dstr,a,t,c,s:sc,n,v:val,pendRef};
 }
 
 /*==== LANÇAR: PREVIEW ====*/
@@ -433,6 +459,7 @@ function confirmPrev(){
   PREV.forEach(p=>{
     if(!p.v){msgs.push('Ignorado (valor zero): '+p.n);return;}
     addTx(p);
+    if(p.pendRef){abatePendByName(p.pendRef,p.v);msgs.push('📌 Abatido em pendência: '+p.pendRef);}
   });
   const n=PREV.length;PREV=[];renderPreview();save();
   document.getElementById('parseMsg').textContent='✅ Lançamentos salvos!'+(msgs.length?' '+msgs.join(' · '):'');
@@ -720,16 +747,69 @@ function loadScript(src){return new Promise((res,rej)=>{
   document.head.appendChild(s);});}
 async function ocrRun(files){
   try{
-    if(!window.Tesseract){ocrStatus('⏳ Baixando o leitor de recibos (primeira vez)…');
+    if(!window.Tesseract){ocrStatus('⏳ Baixando o leitor de imagens (primeira vez)…');
       await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');}
+    const noteEl=document.getElementById('ocrNote');
+    const note=noteEl?noteEl.value.trim():'';
     for(const f of files){
-      ocrStatus('🔍 Lendo o recibo…');
-      const r=await Tesseract.recognize(f,'por',{logger:m=>{if(m.status==='recognizing text')ocrStatus('🔍 Lendo o recibo… '+Math.round(m.progress*100)+'%');}});
-      PREV.push(receiptParse(r.data.text));
+      ocrStatus('🔍 Lendo a imagem…');
+      const r=await Tesseract.recognize(f,'por',{logger:m=>{if(m.status==='recognizing text')ocrStatus('🔍 Lendo… '+Math.round(m.progress*100)+'%');}});
+      PREV.push(...smartParse(r.data.text,note));
     }
     renderPreview();
-    ocrStatus('✅ Recibo lido! Confira o lançamento sugerido abaixo, ajuste se precisar e confirme.');
+    if(noteEl)noteEl.value='';
+    ocrStatus(PREV.length>1?'✅ Encontrei '+PREV.length+' possíveis lançamentos. Complete o que faltar, remova o que não for (✕) e confirme.':'✅ Imagem lida! Confira, ajuste se precisar e confirme.');
   }catch(e){ocrStatus('⚠️ '+e.message);}
+}
+function smartParse(text,note){
+  const lines=text.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(Boolean);
+  const noteCtx=note?parseLine(note):null;
+  const pareceRecibo=/cnpj|cupom|nota fiscal|caixa n|item|qtde|codigo/i.test(text);
+  const numLines=lines.filter(l=>/\d/.test(l)&&/[a-zá-úA-ZÁ-Ú]/.test(l));
+  if(pareceRecibo||numLines.length<3){
+    const p=receiptParse(text);
+    if(noteCtx){
+      if(noteCtx.n&&noteCtx.n!==noteCtx.c)p.n=noteCtx.n;
+      if(noteCtx.c!=='Outros')({a:p.a,t:p.t,c:p.c,s:p.s}={a:noteCtx.a,t:noteCtx.t,c:noteCtx.c,s:noteCtx.s});
+      if(!p.v&&noteCtx.v)p.v=noteCtx.v;
+      p.pendRef=noteCtx.pendRef||null;
+    }
+    return [p];
+  }
+  // modo lista: extrato bancário ou relatório (várias linhas com valores)
+  const out=[];
+  let ctx=null,ctxDate=null;
+  const MABR={jan:1,fev:2,mar:3,abr:4,mai:5,jun:6,jul:7,ago:8,set:9,out:10,nov:11,dez:12};
+  for(const l of lines){
+    if(/\btotal\b|\btenho\b|\bsaldo\b|\bfalta/i.test(l))continue;
+    // linha só de data → vira contexto ("Financeiro 28.06", "dom., 31 de mai.")
+    const dm=l.match(/\b(\d{1,2})[\/\.\-](\d{1,2})(?:[\/\.\-](\d{2,4}))?(?!\d)/);
+    const soData=dm&&+dm[2]>=1&&+dm[2]<=12&&l.replace(dm[0],'').replace(/[^0-9,]/g,'').length<2;
+    if(soData){
+      const y=dm[3]?(dm[3].length===2?'20'+dm[3]:dm[3]):String(new Date().getFullYear());
+      ctxDate=y+'-'+String(+dm[2]).padStart(2,'0')+'-'+String(+dm[1]).padStart(2,'0');continue;
+    }
+    const dn=l.toLowerCase().match(/\b(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)/);
+    if(dn&&!/,\d{2}/.test(l)){ctxDate=new Date().getFullYear()+'-'+String(MABR[dn[2]]).padStart(2,'0')+'-'+String(+dn[1]).padStart(2,'0');continue;}
+    // cabeçalhos de seção sem valor
+    if(!/\d/.test(l)){
+      if(/^d[ií]zimos?\b/i.test(l)){ctx={a:'I',t:'E',c:'Dízimos',s:''};continue;}
+      if(/^ofertas?\b/i.test(l)){ctx={a:'I',t:'E',c:'Cultos',s:''};continue;}
+      if(/^cantina/i.test(l)){ctx={a:'I',t:'E',c:'Cantinas',s:''};continue;}
+      continue;
+    }
+    const p=parseLine(l);
+    if(!p||!p.v)continue;
+    // "Ofertas R$ 116,00" em relatório → oferta de culto da igreja
+    if(/^ofertas?\b/i.test(l)){p.a='I';p.t='E';p.c='Cultos';p.s='';p.n='Ofertas';}
+    else if(ctx&&p.c==='Outros'){p.a=ctx.a;p.t=ctx.t;p.c=ctx.c;p.s=ctx.s;}
+    else if(noteCtx&&noteCtx.c!=='Outros'&&p.c==='Outros'){p.a=noteCtx.a;p.t=noteCtx.t;p.c=noteCtx.c;p.s=noteCtx.s;}
+    // pix/transferência: entrada ou saída pelo texto
+    if(/recebid|dep[óo]sito|cr[ée]dito em conta/i.test(l)&&p.t==='S'){p.t='E';p.c=p.a==='I'?'Entradas Especiais':'Ofertas Especiais';p.s='';}
+    if(ctxDate)p.d=ctxDate;
+    out.push(p);
+  }
+  return out.length?out:[receiptParse(text)];
 }
 function receiptParse(text){
   const lines=text.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(Boolean);
@@ -740,8 +820,8 @@ function receiptParse(text){
   if(tl){const v=grab(tl);if(v.length)val=v[v.length-1];}
   if(!val){const all=grab(text);if(all.length)val=Math.max(...all);}
   const dt=new Date();let dstr=null;
-  const dm=text.match(/\b(\d{2})\/(\d{2})\/(\d{2,4})\b/);
-  if(dm){const y=dm[3].length===2?'20'+dm[3]:dm[3];if(+dm[2]>=1&&+dm[2]<=12)dstr=y+'-'+dm[2]+'-'+dm[1];}
+  const dm=text.match(/\b(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})\b/);
+  if(dm){const y=dm[3].length===2?'20'+dm[3]:dm[3];if(+dm[2]>=1&&+dm[2]<=12)dstr=y+'-'+String(+dm[2]).padStart(2,'0')+'-'+String(+dm[1]).padStart(2,'0');}
   if(!dstr)dstr=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
   let c='Outros',sc='';
   const map=[
@@ -873,6 +953,97 @@ async function syncTest(){
   }catch(e){alert('⚠️ Falhou: '+e.message);}
 }
 
+/*==== PENDÊNCIAS (não entram nos saldos) ====*/
+function pendGuard(){S.pend=S.pend||[];}
+function renderPend(){
+  pendGuard();
+  const el=document.getElementById('pendList');if(!el)return;
+  const grp=(a,titulo)=>{
+    const list=S.pend.filter(p=>p.a===a);
+    const tot=list.reduce((x,p)=>x+Math.max(0,p.total-p.pago),0);
+    return `<h3>${titulo} — em aberto: ${fmt(tot)}</h3>`+(list.length?
+     `<div style="overflow-x:auto"><table><tr><th>Descrição</th><th class="num">Total</th><th class="num">Pago</th><th class="num">Restante</th><th></th></tr>`+
+     list.map(p=>{const r=Math.max(0,p.total-p.pago);
+      return `<tr${r<=0?' style="opacity:.55"':''}><td>${esc(p.desc)}</td><td class="num">${fmt(p.total)}</td><td class="num">${fmt(p.pago)}</td><td class="num ${r>0?'neg':'pos'}">${fmt(r)}</td>
+      <td class="no-print" style="white-space:nowrap"><button class="icon" title="Abater valor" onclick="abatePend('${p.id}')">✔</button><button class="icon" title="Excluir" onclick="delPend('${p.id}')">🗑️</button></td></tr>`;}).join('')+'</table></div>':'<p class="hint">Nenhuma pendência.</p>');
+  };
+  el.innerHTML=grp('I','⛪ Da Igreja')+grp('P','🏠 Pessoais');
+}
+function addPendLines(){
+  pendGuard();
+  let n=0;
+  document.getElementById('pendIn').value.split('\n').forEach(l=>{
+    l=l.trim();if(!l)return;
+    let a='P';
+    if(/^igreja[:\s]/i.test(l)){a='I';l=l.replace(/^igreja[:\s]+/i,'');}
+    if(/^pessoal[:\s]/i.test(l)){l=l.replace(/^pessoal[:\s]+/i,'');}
+    const nums=[...l.matchAll(/-?\d+(?:\.\d{3})+(?:,\d{1,2})?|-?\d+(?:[.,]\d{1,2})?/g)];
+    if(!nums.length)return;
+    const last=nums[nums.length-1];
+    const v=pv(last[0]);if(!v)return;
+    const desc=(l.slice(0,last.index)+l.slice(last.index+last[0].length)).replace(/\bR\$\s*/gi,'').replace(/\s{2,}/g,' ').trim()||'Pendência';
+    S.pend.push({id:uid(),a,desc:desc.charAt(0).toUpperCase()+desc.slice(1),total:v,pago:0,d:new Date().toISOString().slice(0,10)});
+    n++;
+  });
+  if(n){document.getElementById('pendIn').value='';save();}
+  else alert('Escreva a descrição e o valor — ex.: cartão nubank 1.500');
+}
+function abatePend(id){
+  pendGuard();
+  const p=S.pend.find(x=>x.id===id);if(!p)return;
+  const v=pv(prompt('Valor a abater de "'+p.desc+'"\n(restante '+fmt(Math.max(0,p.total-p.pago))+'):')||'');
+  if(v>0){p.pago+=v;save();}
+}
+function abatePendByName(nome,v){
+  pendGuard();
+  const alvo=String(nome).toLowerCase();
+  const p=S.pend.find(x=>(x.total-x.pago)>0&&x.desc.toLowerCase().includes(alvo))||S.pend.find(x=>x.desc.toLowerCase().includes(alvo));
+  if(p)p.pago+=v;
+}
+function delPend(id){if(confirm('Excluir pendência?')){pendGuard();S.pend=S.pend.filter(p=>p.id!==id);save();}}
+
+/*==== CONSELHEIRO FINANCEIRO (área pessoal) ====*/
+function renderConselheiro(){
+  const el=document.getElementById('conselheiro');if(!el)return;
+  pendGuard();
+  const hoje=new Date();
+  const dISO=x=>x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+  const d7=new Date(hoje);d7.setDate(d7.getDate()-6);
+  const d8=new Date(hoje);d8.setDate(d8.getDate()-7);
+  const d14=new Date(hoje);d14.setDate(d14.getDate()-13);
+  const gasto=(ini,fim)=>sum(S.tx.filter(x=>x.a==='P'&&x.t==='S'&&x.d>=dISO(ini)&&x.d<=dISO(fim)));
+  const semAtual=gasto(d7,hoje),semAnt=gasto(d14,d8);
+  const m=dISO(hoje).slice(0,7);
+  const E=sum(txOf('P',m,'E')),Sd=sum(txOf('P',m,'S'));
+  const saldo=S.cfg.si.P+net(S.tx.filter(x=>x.a==='P'));
+  const pendP=S.pend.filter(p=>p.a==='P').reduce((x,p)=>x+Math.max(0,p.total-p.pago),0);
+  const pendI=S.pend.filter(p=>p.a==='I').reduce((x,p)=>x+Math.max(0,p.total-p.pago),0);
+  const cats={};S.tx.filter(x=>x.a==='P'&&x.t==='S'&&x.d>=dISO(d7)).forEach(x=>cats[x.c]=(cats[x.c]||0)+x.v);
+  const top=Object.entries(cats).sort((a,b)=>b[1]-a[1])[0];
+  const diasNoMes=new Date(hoje.getFullYear(),hoje.getMonth()+1,0).getDate();
+  const diaHoje=hoje.getDate();
+  const mediaDia=diaHoje>0?Sd/diaHoje:0;
+  const projecao=saldo-(mediaDia*(diasNoMes-diaHoje));
+  const dicas=[];
+  if(saldo<0)dicas.push('🔴 Seu caixa está negativo ('+fmt(saldo)+'). Vale segurar "Lanches" e "Outros" até virar o mês.');
+  if(semAnt>0&&semAtual>semAnt*1.3)dicas.push('⚠️ Esta semana você gastou '+Math.round((semAtual/semAnt-1)*100)+'% a mais que a semana passada ('+fmt(semAtual)+' × '+fmt(semAnt)+').');
+  if(semAnt>0&&semAtual<semAnt*0.7)dicas.push('✅ Boa! Esta semana você gastou '+Math.round((1-semAtual/semAnt)*100)+'% a menos que a semana passada.');
+  if(top&&Sd>0&&top[1]>=Sd*0.4)dicas.push('👀 "'+top[0]+'" concentrou '+fmt(top[1])+' nos últimos 7 dias — a maior fatia dos seus gastos.');
+  if(E>0&&Sd>E)dicas.push('⚠️ No mês, as saídas ('+fmt(Sd)+') já superam as entradas ('+fmt(E)+').');
+  if(mediaDia>0&&projecao<0&&saldo>=0)dicas.push('📉 No ritmo atual (~'+fmt(mediaDia)+'/dia), o caixa pode terminar o mês em '+fmt(projecao)+'. Um freio agora evita aperto.');
+  if(pendP>0)dicas.push('📌 Há '+fmt(pendP)+' em pendências pessoais. Abater uma pequena por semana mantém tudo andando.');
+  if(!dicas.length)dicas.push('✅ Semana sob controle — nenhum alerta. Continue lançando tudo: constância é o segredo.');
+  el.innerHTML=`<div class="card"><h2>🧭 Conselheiro financeiro <span class="hint">panorama de hoje</span></h2>
+   <div class="grid c4">
+    <div class="kpi"><div class="lbl">Gastos · últimos 7 dias</div><div class="val">${fmt(semAtual)}</div></div>
+    <div class="kpi"><div class="lbl">7 dias anteriores</div><div class="val">${fmt(semAnt)}</div></div>
+    <div class="kpi ${saldo>=0?'b':'r'}"><div class="lbl">Caixa pessoal</div><div class="val">${fmt(saldo)}</div></div>
+    <div class="kpi ${projecao>=0?'g':'r'}"><div class="lbl">Projeção fim do mês</div><div class="val">${fmt(projecao)}</div></div>
+   </div>
+   ${dicas.map(t=>`<p style="margin:8px 0 0">${t}</p>`).join('')}
+  </div>`;
+}
+
 /*==== SESSÃO: BLOQUEIO AUTOMÁTICO + CRONÔMETRO ====*/
 const LOCK_MS=5*60*1000;
 let LAST_ACT=Date.now();
@@ -909,7 +1080,7 @@ function showNow(pg){
   document.querySelectorAll('section.page').forEach(s=>s.classList.toggle('on',s.id==='pg-'+pg));
   if(pg==='mov')renderMov();
   if(pg==='dashI')renderDash('I');
-  if(pg==='dashP'){renderDash('P');renderComp();}
+  if(pg==='dashP'){renderConselheiro();renderDash('P');renderComp();renderPend();}
 }
 function refresh(){
   const sI=S.cfg.si.I+net(S.tx.filter(x=>x.a==='I')),sP=S.cfg.si.P+net(S.tx.filter(x=>x.a==='P'));
@@ -958,6 +1129,20 @@ document.addEventListener('DOMContentLoaded',()=>{
   setInterval(()=>{if(!isLocked()&&syncCfg())cloudPull(true);},30000);
   document.getElementById('refreshBtn').onclick=()=>cloudPull();
   document.getElementById('lockBtn').onclick=lockNow;
+  // pendências
+  S.pend=S.pend||[];
+  document.getElementById('btnPend').onclick=addPendLines;
+  // colar imagem (print copiado) em qualquer lugar da tela
+  document.addEventListener('paste',e=>{
+    if(isLocked())return;
+    const items=e.clipboardData&&e.clipboardData.items;if(!items)return;
+    for(const it of items){
+      if(it.type&&it.type.indexOf('image')===0){
+        const f=it.getAsFile();
+        if(f){e.preventDefault();showNow('lancar');ocrRun([f]);return;}
+      }
+    }
+  });
   document.body.dataset.theme=S.cfg.theme||'light';
   document.getElementById('themeBtn').onclick=()=>{S.cfg.theme=document.body.dataset.theme=(document.body.dataset.theme==='light'?'dark':'light');save();};
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.pg));
