@@ -306,6 +306,23 @@ function responder(e){
     <p class="hint">As senhas protegem contra olhares casuais (abertura do sistema, painel Pessoal, relatórios pessoais, movimentos e exportações). Os dados continuam gravados no aparelho — não é criptografia.</p>
   </div>
   <div class="card">
+    <h2>🏷️ Apelidos inteligentes</h2>
+    <p class="hint">Ensine o sistema a reconhecer um nome (e, opcionalmente, um valor exato) e transformá-lo automaticamente na descrição/categoria certa ao ler recibos. Ex.: Pix para <b>Alícia Carneiro Braga de Sousa</b> de <b>R$ 11,65</b> → <b>YouTube Premium</b> (Pessoal · Outros). Deixe o valor em branco para valer em qualquer valor.</p>
+    <div class="row">
+      <input type="text" id="al-nome" placeholder="Nome que aparece no recibo" style="flex:1;min-width:200px">
+      <input type="text" id="al-valor" placeholder="Valor exato (opcional)" style="width:150px">
+    </div>
+    <div class="row">
+      <input type="text" id="al-desc" placeholder="Vira a descrição (ex.: YouTube Premium)" style="flex:1;min-width:200px">
+      <select id="al-area"><option value="P">Pessoal</option><option value="I">Igreja</option></select>
+      <select id="al-tipo"><option value="S">Saída</option><option value="E">Entrada</option></select>
+      <select id="al-cat"></select>
+      <select id="al-sub"></select>
+      <button class="btn" id="btnAliasAdd">Salvar apelido</button>
+    </div>
+    <div id="aliasList"></div>
+  </div>
+  <div class="card">
     <h2>Zona de risco</h2>
     <div class="row"><button class="btn warn" id="btnReset">Apagar tudo e recomeçar</button></div>
   </div>
@@ -914,15 +931,21 @@ function rec2src(nome,name){return nome.indexOf('Pix — ')===0?nome.slice(6):na
 /*==== MEMÓRIA DE NOMES (aliases) ====*/
 function aliasGuard(){S.alias=S.alias||{};}
 const aliasNorm=s=>String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+function applyAlias(p,al){p.n=al.n;p.a=al.a;p.t=al.t;p.c=al.c;p.s=al.s||'';p.aliasHit=1;}
 function aplicaAlias(p,texto){
   aliasGuard();
   const t=aliasNorm(texto);
+  let general=null;
   for(const k in S.alias){
-    if(k&&k.length>3&&t.includes(k)){
-      const al=S.alias[k];
-      p.n=al.n;p.a=al.a;p.t=al.t;p.c=al.c;p.s=al.s||'';p.aliasHit=1;break;
+    const al=S.alias[k];if(!al)continue;
+    const nk=al.nk||k;                          // chave do nome (composta guarda nk)
+    if(nk.length>3&&t.includes(nk)){
+      if(al.v!=null){                           // regra por nome + valor exato
+        if(Math.abs((+al.v)-(+p.v))<0.005){applyAlias(p,al);return;}
+      }else if(!general){general=al;}           // regra genérica: só se nenhuma por valor casar
     }
   }
+  if(general)applyAlias(p,general);
 }
 function aprendeAlias(p){
   aliasGuard();
@@ -930,6 +953,31 @@ function aprendeAlias(p){
   const k=aliasNorm(p.src);
   if(k.length<4)return;
   if(aliasNorm(p.n)!==k)S.alias[k]={n:p.n,a:p.a,t:p.t,c:p.c,s:p.s||''};
+}
+/* apelido por nome + valor exato (ex.: Pix "Alícia..." R$ 11,65 → YouTube Premium) */
+function aliasKeyNV(nome,v){return aliasNorm(nome)+'@'+Math.round(pv(v)*100);}
+function addAliasRule(nome,v,al){
+  aliasGuard();
+  const nk=aliasNorm(nome);if(nk.length<4)return false;
+  if(v!=null&&v!==''&&pv(v)>0){
+    S.alias[aliasKeyNV(nome,v)]={nk,v:pv(v),n:al.n,a:al.a,t:al.t,c:al.c,s:al.s||''};
+  }else{
+    S.alias[nk]={n:al.n,a:al.a,t:al.t,c:al.c,s:al.s||''};
+  }
+  return true;
+}
+function delAlias(key){aliasGuard();if(!(key in S.alias))return;delete S.alias[key];S.del=S.del||[];S.del.push(key);save();}
+function fillAliasCats(){const a=document.getElementById('al-area').value,t=document.getElementById('al-tipo').value;document.getElementById('al-cat').innerHTML=catOptions(a,t,'');fillAliasSubs();}
+function fillAliasSubs(){const a=document.getElementById('al-area').value,t=document.getElementById('al-tipo').value,c=document.getElementById('al-cat').value;document.getElementById('al-sub').innerHTML=subOptions(a,t,c,'');}
+function renderAliases(){
+  aliasGuard();
+  const el=document.getElementById('aliasList');if(!el)return;
+  const keys=Object.keys(S.alias);
+  if(!keys.length){el.innerHTML='<p class="hint">Nenhum apelido cadastrado ainda. Eles também são criados sozinhos quando você corrige um recibo.</p>';return;}
+  el.innerHTML='<div style="overflow-x:auto"><table><tr><th>Reconhece</th><th class="num">Valor</th><th>Vira</th><th>Categoria</th><th></th></tr>'+
+   keys.map(k=>{const al=S.alias[k];const nome=al.nk||k;
+     return `<tr><td>${esc(nome)}</td><td class="num">${al.v!=null?fmt(+al.v):'qualquer'}</td><td>${esc(al.n)}</td><td>${AREAS[al.a]} · ${esc(al.c)}${al.s?' › '+esc(al.s):''}</td>
+     <td class="no-print"><button class="icon" title="Excluir apelido" onclick="delAlias('${k.replace(/'/g,"\\'")}');renderAliases()">🗑️</button></td></tr>`;}).join('')+'</table></div>';
 }
 
 /*==== SENHA DE ABERTURA DO SISTEMA ====*/
@@ -1031,8 +1079,10 @@ function mergeStates(loc,rem){
   const cj={};
   (rem.comp||[]).forEach(c=>{if(!del.has(c.id))cj[c.id]=c;});
   (loc.comp||[]).forEach(c=>{if(!del.has(c.id))cj[c.id]=c;});
+  const alias=Object.assign({},rem.alias||{},loc.alias||{});
+  del.forEach(k=>{if(k in alias)delete alias[k];});   // apelidos excluídos não ressuscitam
   return {cfg:loc.cfg,tx,pend:Object.values(pj),comp:Object.values(cj),
-    alias:Object.assign({},rem.alias||{},loc.alias||{}),del:[...del],saved:new Date().toISOString()};
+    alias,del:[...del],saved:new Date().toISOString()};
 }
 async function cloudPull(silent){
   const c=syncCfg();if(!c)return;
@@ -1276,7 +1326,25 @@ document.addEventListener('DOMContentLoaded',()=>{
   // pendências e memória de nomes
   S.pend=S.pend||[];
   S.alias=S.alias||{};
+  // semente única: Pix "Alícia Carneiro Braga de Sousa" R$ 11,65 → YouTube Premium
+  if(!S.cfg.aliasSeed1){
+    addAliasRule('Alícia Carneiro Braga de Sousa','11,65',{n:'YouTube Premium',a:'P',t:'S',c:'Outros',s:''});
+    S.cfg.aliasSeed1=1;save();
+  }
   document.getElementById('btnPend').onclick=addPendLines;
+  // apelidos inteligentes (nome + valor → categoria)
+  ['al-area','al-tipo'].forEach(id=>document.getElementById(id).onchange=fillAliasCats);
+  document.getElementById('al-cat').onchange=fillAliasSubs;
+  fillAliasCats();
+  document.getElementById('btnAliasAdd').onclick=()=>{
+    const g=id=>document.getElementById(id);
+    const nome=g('al-nome').value.trim();
+    if(nome.length<3){alert('Escreva o nome que aparece no recibo (ao menos 3 letras).');return;}
+    const desc=g('al-desc').value.trim()||nome;
+    if(!addAliasRule(nome,g('al-valor').value,{n:desc,a:g('al-area').value,t:g('al-tipo').value,c:g('al-cat').value,s:g('al-sub').value||''})){alert('Não consegui salvar — confira o nome.');return;}
+    save();['al-nome','al-valor','al-desc'].forEach(i=>g(i).value='');renderAliases();
+  };
+  renderAliases();
   // colar imagem (print copiado) em qualquer lugar da tela → fica em espera com miniatura
   document.addEventListener('paste',e=>{
     if(isLocked())return;
