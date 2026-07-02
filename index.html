@@ -114,14 +114,14 @@ summary{cursor:pointer;font-weight:700}
 }
 .nvi{margin-right:6px} #fab{display:none}
 @media(max-width:640px){
-  main{padding:12px;padding-bottom:84px}
+  main{padding:12px;padding-bottom:104px}
   .kpi .val{font-size:19px}
-  nav{position:fixed;left:0;right:0;bottom:0;top:auto;border-top:1px solid var(--line);border-bottom:none;justify-content:space-around;gap:2px;padding:6px 2px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -6px 20px rgba(0,0,0,.28);flex-wrap:nowrap}
-  nav button{flex:1 1 0;min-width:0;border:none;background:transparent;border-radius:12px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 1px;font-size:10px;font-weight:600;color:var(--muted);box-shadow:none}
-  nav button .nvi{margin-right:0;font-size:19px;line-height:1}
+  nav{position:fixed;left:0;right:0;bottom:0;top:auto;border-top:1px solid var(--line);border-bottom:none;justify-content:space-around;gap:2px;padding:9px 4px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -6px 20px rgba(0,0,0,.28);flex-wrap:nowrap}
+  nav button{flex:1 1 0;min-width:0;border:none;background:transparent;border-radius:12px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 1px;font-size:11px;font-weight:600;color:var(--muted);box-shadow:none}
+  nav button .nvi{margin-right:0;font-size:24px;line-height:1}
   nav button .nvt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   nav button.on{background:transparent;color:var(--gold);font-weight:800;box-shadow:none}
-  #fab{display:flex;position:fixed;right:16px;bottom:78px;width:56px;height:56px;border-radius:50%;background:linear-gradient(180deg,var(--gold),var(--gold-dk));color:#1a1205;border:none;font-size:30px;line-height:1;align-items:center;justify-content:center;box-shadow:0 8px 22px rgba(212,175,55,.5);z-index:21;cursor:pointer}
+  #fab{display:flex;position:fixed;right:16px;bottom:calc(96px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;background:linear-gradient(180deg,var(--gold),var(--gold-dk));color:#1a1205;border:none;font-size:32px;line-height:1;align-items:center;justify-content:center;box-shadow:0 8px 22px rgba(212,175,55,.5);z-index:21;cursor:pointer}
 }
 </style>
 </head>
@@ -144,6 +144,7 @@ summary{cursor:pointer;font-weight:700}
   <span id="chipP" class="chip pos"></span>
   <span id="syncChip" class="hint no-print"></span>
   <span id="sessChip" class="hint no-print" title="Tempo até o bloqueio automático"></span>
+  <button class="icon no-print" id="dadosBtn" title="Configurações e dados">⚙️</button>
   <button class="icon no-print" id="refreshBtn" title="Atualizar agora (buscar da nuvem)">🔄</button>
   <button class="icon no-print" id="lockBtn" title="Bloquear agora">🔒</button>
   <button class="icon no-print" id="themeBtn" title="Tema claro/escuro">🌓</button>
@@ -154,7 +155,6 @@ summary{cursor:pointer;font-weight:700}
   <button data-pg="dashI"><span class="nvi">⛪</span><span class="nvt">Igreja</span></button>
   <button data-pg="dashP"><span class="nvi">🏠</span><span class="nvt">Pessoal</span></button>
   <button data-pg="rel"><span class="nvi">📊</span><span class="nvt">Relatórios</span></button>
-  <button data-pg="dados"><span class="nvi">⚙️</span><span class="nvt">Dados</span></button>
 </nav>
 <main>
 
@@ -219,19 +219,6 @@ summary{cursor:pointer;font-weight:700}
 <section class="page" id="pg-dashP">
   <div class="row no-print"><label>Mês: <input type="month" id="mP"></label></div>
   <div id="dashP"></div>
-  <div class="card" id="compCard">
-    <h2>Compromissos em aberto (parcelas)</h2>
-    <div style="overflow-x:auto"><table id="compTable"></table></div>
-    <div class="row no-print">
-      <input type="text" id="cp-desc" placeholder="Descrição" style="flex:1;min-width:140px">
-      <input type="text" id="cp-venc" placeholder="Vencimento" style="width:110px">
-      <input type="text" id="cp-parc" placeholder="Parcela (2/7)" style="width:100px">
-      <input type="text" id="cp-vp" placeholder="Valor parcela" style="width:110px">
-      <input type="text" id="cp-vt" placeholder="Valor total" style="width:110px">
-      <input type="text" id="cp-obs" placeholder="Obs" style="width:110px">
-      <button class="btn" id="btnComp">Adicionar</button>
-    </div>
-  </div>
   <div class="card">
     <h2>📌 Pendências (contas em aberto)</h2>
     <p class="hint">Não entram em saldos nem relatórios. Para abater, use ✔ na linha ou termine o lançamento com "pendência (nome)".</p>
@@ -512,6 +499,12 @@ function confirmPrev(){
     addTx(p);
     aprendeAlias(p);
     if(p.pendRef){abatePendByName(p.pendRef,p.v);msgs.push('📌 Abatido em pendência: '+p.pendRef);}
+    else if(p.t==='S'){
+      const pend=findPendByName(p.n,p.a);
+      if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+' dessa pendência?')){
+        pend.pago+=p.v;msgs.push('📌 Abatido em pendência: '+pend.desc);
+      }
+    }
   });
   const n=PREV.length;PREV=[];renderPreview();save();
   document.getElementById('parseMsg').textContent='✅ Lançamentos salvos!'+(msgs.length?' '+msgs.join(' · '):'');
@@ -1191,6 +1184,21 @@ function abatePendByName(nome,v){
   const p=S.pend.find(x=>(x.total-x.pago)>0&&x.desc.toLowerCase().includes(alvo))||S.pend.find(x=>x.desc.toLowerCase().includes(alvo));
   if(p)p.pago+=v;
 }
+/* acha uma pendência ABERTA parecida com o nome do lançamento (mesma área) */
+function findPendByName(nome,area){
+  pendGuard();
+  const t=aliasNorm(nome);if(!t)return null;
+  const tks=new Set(t.split(' ').filter(w=>w.length>=4));
+  let best=null,bestScore=0;
+  S.pend.forEach(p=>{
+    if((area&&p.a!==area)||(p.total-p.pago)<=0.004)return;
+    const d=aliasNorm(p.desc);let score=0;
+    if(d&&(d.includes(t)||t.includes(d)))score=100;
+    d.split(' ').forEach(w=>{if(w.length>=4&&tks.has(w))score+=10;});
+    if(score>bestScore){bestScore=score;best=p;}
+  });
+  return bestScore>0?best:null;
+}
 function delPend(id){if(confirm('Excluir pendência?')){pendGuard();S.del=S.del||[];S.del.push(id);S.pend=S.pend.filter(p=>p.id!==id);save();}}
 
 /*==== CONSELHEIROS FINANCEIROS (Igreja e Pessoal) ====*/
@@ -1297,7 +1305,7 @@ function showNow(pg){
   document.querySelectorAll('section.page').forEach(s=>s.classList.toggle('on',s.id==='pg-'+pg));
   if(pg==='mov')renderMov();
   if(pg==='dashI')renderDash('I');
-  if(pg==='dashP'){renderConselheiro();renderDash('P');renderComp();renderPend();}
+  if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();}
 }
 function refresh(){
   const sI=S.cfg.si.I+net(S.tx.filter(x=>x.a==='I')),sP=S.cfg.si.P+net(S.tx.filter(x=>x.a==='P'));
@@ -1346,6 +1354,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   setInterval(()=>{if(!isLocked()&&syncCfg())cloudPull(true);},30000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&syncCfg())cloudPull(true);});
   document.getElementById('refreshBtn').onclick=()=>cloudPull();
+  document.getElementById('dadosBtn').onclick=()=>show('dados');
   document.getElementById('lockBtn').onclick=lockNow;
   // pendências e memória de nomes
   S.pend=S.pend||[];
@@ -1409,13 +1418,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   // dashboards
   document.getElementById('mI').onchange=()=>renderDash('I');
   document.getElementById('mP').onchange=()=>renderDash('P');
-  // compromissos
-  document.getElementById('btnComp').onclick=()=>{
-    const g=id=>document.getElementById(id);
-    if(!g('cp-desc').value)return;
-    S.comp.push({id:uid(),desc:g('cp-desc').value,venc:g('cp-venc').value,parc:g('cp-parc').value,vp:pv(g('cp-vp').value),vt:pv(g('cp-vt').value),obs:g('cp-obs').value});
-    ['cp-desc','cp-venc','cp-parc','cp-vp','cp-vt','cp-obs'].forEach(i=>g(i).value='');save();
-  };
   // modal editar/mover
   ['e-area','e-t'].forEach(id=>document.getElementById(id).onchange=fillEditCats);
   document.getElementById('e-c').onchange=fillEditSubs;
