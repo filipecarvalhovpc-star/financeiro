@@ -138,13 +138,19 @@ summary{cursor:pointer;font-weight:600}
 <section class="page on" id="pg-lancar">
   <div class="card">
     <h2>Lançamento rápido — escreva como numa conversa</h2>
-    <p class="hint">Um lançamento por linha, com o valor no fim. Formato: <code>dízimo (nome) (valor)</code> · <code>mercado (valor)</code> · <code>oferta culto domingo (valor)</code> · <code>igreja aluguel (valor) (data)</code> · <code>pró-labore (valor)</code> · <code>igreja gasolina (valor)</code> — despesa da igreja · <code>gasolina (valor)</code> — pessoal. Sem data = hoje. Você confere e ajusta tudo antes de salvar.</p>
+    <p class="hint">Um lançamento por linha, com o valor no fim. Formato: <code>dízimo (nome) (valor)</code> · <code>mercado (valor)</code> · <code>oferta culto domingo (valor)</code> · <code>igreja aluguel (valor) (data)</code> · <code>pró-labore (valor)</code> · <code>igreja gasolina (valor)</code> — despesa da igreja · <code>gasolina (valor)</code> — pessoal · <code>entrada pessoal externa (valor) (quem)</code> — entrada sua que NÃO sai da igreja. Sem data = hoje. Você confere e ajusta tudo antes de salvar.</p>
     <textarea id="qin" placeholder="Escreva aqui um lançamento por linha…"></textarea>
     <div class="row">
       <button class="btn" id="btnParse">Analisar</button>
       <label class="btn sec" style="display:inline-block">📷 Fotografar nota/recibo<input type="file" id="ocrCam" accept="image/*" capture="environment" style="display:none"></label>
       <label class="btn sec" style="display:inline-block">🖼️ Enviar imagem de recibo<input type="file" id="ocrFile" accept="image/*" multiple style="display:none"></label>
       <span class="hint" id="parseMsg"></span>
+    </div>
+    <div class="row" id="imgStage" style="display:none">
+      <img id="imgThumb" alt="" style="height:84px;max-width:140px;object-fit:cover;border-radius:12px;border:1px solid var(--line)">
+      <span class="hint" id="imgCount"></span>
+      <button class="btn" id="btnOcrGo">🔎 Ler imagem</button>
+      <button class="btn sec" id="btnOcrCancel">✕ Remover</button>
     </div>
     <div class="row">
       <input type="text" id="ocrNote" placeholder="Do que se trata? (opcional — será analisado junto com a imagem)" style="flex:1;min-width:230px">
@@ -295,6 +301,7 @@ function responder(e){
     <div class="row"><label>Saldo inicial Igreja (antes do 1º lançamento): <input type="text" id="cfg-si" style="width:110px"></label></div>
     <div class="row"><label>Saldo inicial Pessoal: <input type="text" id="cfg-sp" style="width:110px"></label></div>
     <div class="row"><label><input type="checkbox" id="cfg-mirror"> Ao lançar salário/ajuda em "Custo Pastoral" na Igreja, criar automaticamente a entrada "Repasse Igreja" no Pessoal</label></div>
+    <div class="row"><label><input type="checkbox" id="cfg-autosal"> Gastos pessoais geram automaticamente o salário pago pela igreja (Pr. Filipe 1.700 → Pra. Anna 1.700 → Missionários 3×300 → Bônus extra se o caixa pessoal ficar negativo)</label></div>
     <div class="row"><button class="btn" id="btnCfg">Salvar configurações</button> <button class="btn sec" id="btnPinSys">🔑 Alterar senha de abertura</button> <button class="btn sec" id="btnPin">🔒 Alterar senha da área pessoal</button> <button class="btn sec" id="btnBio">👤 Face ID neste aparelho</button></div>
     <p class="hint">As senhas protegem contra olhares casuais (abertura do sistema, painel Pessoal, relatórios pessoais, movimentos e exportações). Os dados continuam gravados no aparelho — não é criptografia.</p>
   </div>
@@ -372,6 +379,7 @@ function ultimoMes(a){const ms=S.tx.filter(x=>!a||x.a===a).map(x=>mk(x.d)).sort(
 
 /*==== PARSER CONVERSACIONAL ====*/
 const RULES=[
+ [/entrada pessoal externa/i,'P','E','Ofertas Especiais',''],
  [/d[ií]zimos?\b/i,'I','E','Dízimos',''],
  [/repasse/i,'P','E','Repasse Igreja',''],
  [/benef[ií]cio|bolsa fam[ií]lia|\bbf\b/i,'P','E','Benefícios',''],
@@ -428,7 +436,7 @@ function parseLine(line){
   }}
   let n=txt.replace(/\bR\$\s*/gi,'').replace(/\s{2,}/g,' ').replace(/^[\s\-–,.:]+|[\s\-–,.:]+$/g,'').trim();
   // a palavra da categoria não faz parte do nome ("Dízimo Carlice Bastos" → "Carlice Bastos")
-  n=n.replace(/^(d[ií]zimos?|repasse|benef[ií]cios?|caridade|doa[çc][ãa]o|ofertas?)\s+(?:de\s+|da\s+|do\s+)?/i,'').trim();
+  n=n.replace(/^(entrada pessoal externa|d[ií]zimos?|repasse|benef[ií]cios?|caridade|doa[çc][ãa]o|ofertas?)\s+(?:de\s+|da\s+|do\s+)?/i,'').trim();
   if(n)n=n.charAt(0).toUpperCase()+n.slice(1);
   if(!n)n=c;
   return {d:dstr,a,t,c,s:sc,n,v:val,pendRef};
@@ -461,6 +469,7 @@ function confirmPrev(){
   PREV.forEach(p=>{
     if(!p.v){msgs.push('Ignorado (valor zero): '+p.n);return;}
     addTx(p);
+    aprendeAlias(p);
     if(p.pendRef){abatePendByName(p.pendRef,p.v);msgs.push('📌 Abatido em pendência: '+p.pendRef);}
   });
   const n=PREV.length;PREV=[];renderPreview();save();
@@ -470,9 +479,41 @@ function confirmPrev(){
 function addTx(p){
   const tx={id:uid(),d:p.d,a:p.a,t:p.t,c:p.c,s:p.s||'',n:p.n,v:p.v};
   S.tx.push(tx);
-  if(S.cfg.mirror&&p.a==='I'&&p.t==='S'&&p.c==='Custo Pastoral'){
+  if(S.cfg.mirror&&p.a==='I'&&p.t==='S'&&p.c==='Custo Pastoral'&&!p.au){
     S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,lk:tx.id});
   }
+  // gastos pessoais geram o salário pago pela igreja (faixas) — excluídas as entradas
+  if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S')autoSalario(p.v,p.d,tx.id);
+}
+/* Salário automático: cada gasto pessoal gera (1) despesa da igreja em Custo Pastoral
+   e (2) entrada pessoal como Repasse, seguindo as faixas mensais:
+   Pr. Filipe até 1.700 → Pra. Anna até 3.400 → Missionários 1/2/3 até 3.700/4.000/4.300.
+   Acima disso, só se o caixa pessoal ficar negativo: "Bônus extra de salário pastoral". */
+function parSal(nome,sub,v,d,lk){
+  v=Math.round(v*100)/100;if(v<=0)return;
+  S.tx.push({id:uid(),d,a:'I',t:'S',c:'Custo Pastoral',s:sub,n:nome,v,au:1,lk});
+  S.tx.push({id:uid(),d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:nome,v,au:1,lk});
+}
+function autoSalario(valor,d,lk){
+  const m=mk(d);
+  const usado=sum(S.tx.filter(x=>x.au&&x.a==='I'&&mk(x.d)===m&&x.n!=='Bônus extra de salário pastoral'));
+  const FAIXAS=[
+    ['Pró-labore Pastor (Pr. Filipe)','Pró-labore',1700],
+    ['Pró-labore Pastora (Pra. Anna)','Pró-labore',3400],
+    ['Ajuda de custo — Missionário 1','Missionários',3700],
+    ['Ajuda de custo — Missionário 2','Missionários',4000],
+    ['Ajuda de custo — Missionário 3','Missionários',4300]];
+  let rest=valor,pos=usado;
+  for(const f of FAIXAS){
+    if(rest<=0)break;
+    if(pos>=f[2])continue;
+    const usa=Math.min(rest,f[2]-pos);
+    parSal(f[0],f[1],usa,d,lk);
+    pos+=usa;rest-=usa;
+  }
+  // além das faixas: bônus só até zerar o caixa pessoal (entradas externas contam antes)
+  const saldoP=S.cfg.si.P+net(S.tx.filter(x=>x.a==='P'));
+  if(saldoP<-0.004)parSal('Bônus extra de salário pastoral','',-saldoP,d,lk);
 }
 
 /*==== MOVIMENTOS ====*/
@@ -741,6 +782,23 @@ function saveEdit(){
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');EDIT_ID=null;}
 
+/*==== IMAGEM EM ESPERA (miniatura estilo WhatsApp) ====*/
+let PENDIMG=null;
+function stageImgs(files){
+  PENDIMG=[...files];
+  const st=document.getElementById('imgStage');if(!st)return;
+  document.getElementById('imgThumb').src=URL.createObjectURL(PENDIMG[0]);
+  document.getElementById('imgCount').textContent=PENDIMG.length>1?PENDIMG.length+' imagens':'';
+  st.style.display='flex';
+  showNow('lancar');
+  ocrStatus('🖼️ Imagem carregada. Escreva do que se trata (opcional) e toque em "Ler imagem".');
+  const n=document.getElementById('ocrNote');if(n)n.focus();
+}
+function clearStage(){
+  PENDIMG=null;
+  const st=document.getElementById('imgStage');if(st)st.style.display='none';
+}
+
 /*==== LEITURA DE RECIBOS (OCR) ====*/
 function ocrStatus(t){document.getElementById('ocrMsg').textContent=t;}
 function loadScript(src){return new Promise((res,rej)=>{
@@ -766,7 +824,7 @@ async function ocrRun(files){
 function smartParse(text,note){
   const lines=text.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(Boolean);
   const noteCtx=note?parseLine(note):null;
-  const pareceRecibo=/cnpj|cupom|nota fiscal|caixa n|item|qtde|codigo/i.test(text);
+  const pareceRecibo=/cnpj|cupom|nota fiscal|caixa n|item|qtde|codigo|comprovante|\bpix\b|transfer[êe]ncia|pagamento efetuado|recebedor|favorecido|destinat[áa]rio|institui[çc][ãa]o|autentica[çc][ãa]o|id da transa/i.test(text);
   const numLines=lines.filter(l=>/\d/.test(l)&&/[a-zá-úA-ZÁ-Ú]/.test(l));
   if(pareceRecibo||numLines.length<3){
     const p=receiptParse(text);
@@ -802,8 +860,9 @@ function smartParse(text,note){
     }
     const p=parseLine(l);
     if(!p||!p.v)continue;
+    p.src=p.n;aplicaAlias(p,l);
     // "Ofertas R$ 116,00" em relatório → oferta de culto da igreja
-    if(/^ofertas?\b/i.test(l)){p.a='I';p.t='E';p.c='Cultos';p.s='';p.n='Ofertas';}
+    if(!p.aliasHit&&/^ofertas?\b/i.test(l)){p.a='I';p.t='E';p.c='Cultos';p.s='';p.n='Ofertas';}
     else if(ctx&&p.c==='Outros'){p.a=ctx.a;p.t=ctx.t;p.c=ctx.c;p.s=ctx.s;}
     else if(noteCtx&&noteCtx.c!=='Outros'&&p.c==='Outros'){p.a=noteCtx.a;p.t=noteCtx.t;p.c=noteCtx.c;p.s=noteCtx.s;}
     // pix/transferência: entrada ou saída pelo texto
@@ -835,7 +894,40 @@ function receiptParse(text){
     [/restaurante|pizzaria|lanchonete|hamburgueria|a[çc]a[ií]|sorveteria|churrascaria|burger/,'Lanches','']];
   for(const[re,rc,rs]of map){if(re.test(low)){c=rc;sc=rs;break;}}
   const name=(lines.find(s=>/[a-zá-úA-ZÁ-Ú]{3,}/.test(s))||'Recibo').slice(0,42);
-  return {d:dstr,a:'P',t:'S',c,s:sc,n:name,v:val};
+  let nome=name;
+  if(/\bpix\b|transfer[êe]ncia|comprovante/i.test(low)){
+    let rec='';
+    for(let i=0;i<lines.length;i++){
+      const mrec=lines[i].match(/^(?:para|recebedor|favorecido|destinat[áa]rio|nome)\b[:\s]*(.*)$/i);
+      if(mrec){rec=(mrec[1]||lines[i+1]||'').trim();if(rec)break;}
+    }
+    nome='Pix'+(rec?' — '+rec.slice(0,32):'');
+    c='Outros';sc='';
+  }
+  const p={d:dstr,a:'P',t:'S',c,s:sc,n:nome,v:val,src:rec2src(nome,name)};
+  aplicaAlias(p,text);
+  return p;
+}
+function rec2src(nome,name){return nome.indexOf('Pix — ')===0?nome.slice(6):name;}
+/*==== MEMÓRIA DE NOMES (aliases) ====*/
+function aliasGuard(){S.alias=S.alias||{};}
+const aliasNorm=s=>String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+function aplicaAlias(p,texto){
+  aliasGuard();
+  const t=aliasNorm(texto);
+  for(const k in S.alias){
+    if(k&&k.length>3&&t.includes(k)){
+      const al=S.alias[k];
+      p.n=al.n;p.a=al.a;p.t=al.t;p.c=al.c;p.s=al.s||'';p.aliasHit=1;break;
+    }
+  }
+}
+function aprendeAlias(p){
+  aliasGuard();
+  if(!p.src||p.aliasHit)return;
+  const k=aliasNorm(p.src);
+  if(k.length<4)return;
+  if(aliasNorm(p.n)!==k)S.alias[k]={n:p.n,a:p.a,t:p.t,c:p.c,s:p.s||''};
 }
 
 /*==== SENHA DE ABERTURA DO SISTEMA ====*/
@@ -1089,11 +1181,21 @@ function tickSess(){
 }
 
 /*==== NAV / INIT ====*/
+/*==== NAVEGAÇÃO POR GESTO (voltar/avançar) ====*/
+let NAVH=['lancar'],NAVI=0,NAVSKIP=false;
+function navRecord(pg){
+  if(NAVSKIP){NAVSKIP=false;return;}
+  if(NAVH[NAVI]===pg)return;
+  NAVH=NAVH.slice(0,NAVI+1);NAVH.push(pg);NAVI=NAVH.length-1;
+}
+function navBack(){if(NAVI>0){NAVI--;NAVSKIP=true;show(NAVH[NAVI]);}}
+function navFwd(){if(NAVI<NAVH.length-1){NAVI++;NAVSKIP=true;show(NAVH[NAVI]);}}
 function show(pg){
   if(pg==='dashP'&&!UNLOCKED){unlockPAsync().then(ok=>{if(ok)showNow(pg);});return;}
   showNow(pg);
 }
 function showNow(pg){
+  navRecord(pg);
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.pg===pg));
   document.querySelectorAll('section.page').forEach(s=>s.classList.toggle('on',s.id==='pg-'+pg));
   if(pg==='mov')renderMov();
@@ -1147,17 +1249,18 @@ document.addEventListener('DOMContentLoaded',()=>{
   setInterval(()=>{if(!isLocked()&&syncCfg())cloudPull(true);},30000);
   document.getElementById('refreshBtn').onclick=()=>cloudPull();
   document.getElementById('lockBtn').onclick=lockNow;
-  // pendências
+  // pendências e memória de nomes
   S.pend=S.pend||[];
+  S.alias=S.alias||{};
   document.getElementById('btnPend').onclick=addPendLines;
-  // colar imagem (print copiado) em qualquer lugar da tela
+  // colar imagem (print copiado) em qualquer lugar da tela → fica em espera com miniatura
   document.addEventListener('paste',e=>{
     if(isLocked())return;
     const items=e.clipboardData&&e.clipboardData.items;if(!items)return;
     for(const it of items){
       if(it.type&&it.type.indexOf('image')===0){
         const f=it.getAsFile();
-        if(f){e.preventDefault();showNow('lancar');ocrRun([f]);return;}
+        if(f){e.preventDefault();stageImgs([f]);return;}
       }
     }
   });
@@ -1201,7 +1304,20 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('e-c').onchange=fillEditSubs;
   // leitura de recibos
   ['ocrCam','ocrFile'].forEach(id=>document.getElementById(id).onchange=e=>{
-    if(e.target.files.length)ocrRun([...e.target.files]);e.target.value='';});
+    if(e.target.files.length)stageImgs([...e.target.files]);e.target.value='';});
+  document.getElementById('btnOcrGo').onclick=()=>{if(PENDIMG){const fs=PENDIMG;clearStage();ocrRun(fs);}};
+  document.getElementById('btnOcrCancel').onclick=clearStage;
+  document.getElementById('ocrNote').addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&PENDIMG){e.preventDefault();const fs=PENDIMG;clearStage();ocrRun(fs);}});
+  // gesto de voltar/avançar (arrastar para os lados)
+  let tX=null,tY=null;
+  document.addEventListener('touchstart',e=>{if(e.touches.length===1){tX=e.touches[0].clientX;tY=e.touches[0].clientY;}},{passive:true});
+  document.addEventListener('touchend',e=>{
+    if(tX===null)return;
+    const dx=e.changedTouches[0].clientX-tX,dy=e.changedTouches[0].clientY-tY;
+    tX=null;tY=null;
+    if(Math.abs(dx)>70&&Math.abs(dy)<60&&!isLocked()){if(dx>0)navBack();else navFwd();}
+  },{passive:true});
   // relatórios
   const anos=[...new Set(S.tx.map(x=>x.d.slice(0,4)))].sort();
   if(!anos.length)anos.push(String(new Date().getFullYear()));
@@ -1253,10 +1369,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('cfg-si').value=String(S.cfg.si.I).replace('.',',');
   document.getElementById('cfg-sp').value=String(S.cfg.si.P).replace('.',',');
   document.getElementById('cfg-mirror').checked=!!S.cfg.mirror;
+  document.getElementById('cfg-autosal').checked=S.cfg.autoSal!==false;
   document.getElementById('btnCfg').onclick=()=>{
     S.cfg.si.I=pv(document.getElementById('cfg-si').value);
     S.cfg.si.P=pv(document.getElementById('cfg-sp').value);
     S.cfg.mirror=document.getElementById('cfg-mirror').checked;
+    S.cfg.autoSal=document.getElementById('cfg-autosal').checked;
     save();alert('Configurações salvas.');
   };
   document.getElementById('btnReset').onclick=()=>{
