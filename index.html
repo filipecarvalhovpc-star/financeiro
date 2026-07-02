@@ -118,6 +118,9 @@ summary{cursor:pointer;font-weight:600}
   <span id="chipI" class="chip pos"></span>
   <span id="chipP" class="chip pos"></span>
   <span id="syncChip" class="hint no-print"></span>
+  <span id="sessChip" class="hint no-print" title="Tempo até o bloqueio automático"></span>
+  <button class="icon no-print" id="refreshBtn" title="Atualizar agora (buscar da nuvem)">🔄</button>
+  <button class="icon no-print" id="lockBtn" title="Bloquear agora">🔒</button>
   <button class="icon no-print" id="themeBtn" title="Tema claro/escuro">🌓</button>
 </header>
 <nav>
@@ -165,7 +168,7 @@ summary{cursor:pointer;font-weight:600}
   <div class="card">
     <h2>Movimentos</h2>
     <div class="row no-print">
-      <select id="f-area"><option value="">Igreja + Pessoal</option><option value="I">Igreja</option><option value="P">Pessoal</option></select>
+      <select id="f-area" style="display:none"><option value="I" selected>Igreja</option></select><span class="badge I" style="padding:5px 12px">Somente Igreja</span>
       <select id="f-t"><option value="">Entradas + Saídas</option><option value="E">Entradas</option><option value="S">Saídas</option></select>
       <input type="month" id="f-m">
       <input type="text" id="f-q" placeholder="Buscar...">
@@ -603,7 +606,7 @@ function relDizimos(y){
 function gerarRel(){
   const tipo=document.getElementById('r-tipo').value,a=document.getElementById('r-area').value,
         m=document.getElementById('r-m').value||ultimoMes(a),y=document.getElementById('r-ano').value;
-  if((tipo==='mensal'||tipo==='anual')&&a==='P'&&!unlockP())return;
+  if((tipo==='mensal'||tipo==='anual')&&a==='P'&&!UNLOCKED){unlockPAsync().then(ok=>{if(ok)gerarRel();});return;}
   let html='';
   if(tipo==='mensal')html=relMensal(a,m);
   else if(tipo==='prestacao')html=relPrestacao(m);
@@ -814,6 +817,13 @@ function unlockP(){
   if(hash(p)===pinHash()){UNLOCKED=true;refresh();return true;}
   alert('Senha incorreta.');return false;
 }
+async function unlockPAsync(){
+  if(UNLOCKED)return true;
+  if(bioAvailable()&&localStorage.getItem(BIOKEY)){
+    try{if(await bioUnlock()){UNLOCKED=true;refresh();return true;}}catch(e){}
+  }
+  return unlockP();
+}
 
 /*==== SINCRONIZAÇÃO NUVEM (Google Apps Script) ====*/
 let SYNC_TIMER=null;
@@ -830,10 +840,10 @@ async function cloudPush(){
   }catch(e){syncInd('☁️ sem conexão — dados salvos neste aparelho');}
 }
 function schedulePush(){if(!syncCfg())return;clearTimeout(SYNC_TIMER);SYNC_TIMER=setTimeout(cloudPush,1200);}
-async function cloudPull(){
+async function cloudPull(silent){
   const c=syncCfg();if(!c)return;
   try{
-    syncInd('☁️ verificando a nuvem…');
+    if(!silent)syncInd('☁️ verificando a nuvem…');
     const r=await fetch(c.url+'?k='+encodeURIComponent(c.key||''));
     const t=await r.text();
     if(t.trim().startsWith('<'))throw new Error('resposta inesperada');
@@ -863,9 +873,38 @@ async function syncTest(){
   }catch(e){alert('⚠️ Falhou: '+e.message);}
 }
 
+/*==== SESSÃO: BLOQUEIO AUTOMÁTICO + CRONÔMETRO ====*/
+const LOCK_MS=5*60*1000;
+let LAST_ACT=Date.now();
+function regAct(){LAST_ACT=Date.now();}
+function isLocked(){return !document.getElementById('lock').classList.contains('off');}
+function lockNow(){
+  UNLOCKED=false;
+  document.getElementById('lock').classList.remove('off');
+  document.getElementById('lock-msg').textContent='';
+  const b=document.getElementById('lock-bio');
+  if(b&&bioAvailable()&&localStorage.getItem(BIOKEY))b.style.display='block';
+  showNow('lancar');
+  setTimeout(()=>{const i=document.getElementById('lock-in');if(i)i.focus();},100);
+}
+function tickSess(){
+  const chip=document.getElementById('sessChip');
+  if(isLocked()){if(chip)chip.textContent='';return;}
+  const left=LOCK_MS-(Date.now()-LAST_ACT);
+  if(left<=0){lockNow();return;}
+  if(chip){
+    const m=Math.floor(left/60000),s=Math.floor(left%60000/1000);
+    chip.textContent='⏱ '+m+':'+String(s).padStart(2,'0');
+    chip.style.color=left<60000?'var(--red)':'';
+  }
+}
+
 /*==== NAV / INIT ====*/
 function show(pg){
-  if(pg==='dashP'&&!unlockP())return;
+  if(pg==='dashP'&&!UNLOCKED){unlockPAsync().then(ok=>{if(ok)showNow(pg);});return;}
+  showNow(pg);
+}
+function showNow(pg){
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.pg===pg));
   document.querySelectorAll('section.page').forEach(s=>s.classList.toggle('on',s.id==='pg-'+pg));
   if(pg==='mov')renderMov();
@@ -879,7 +918,7 @@ function refresh(){
   if(UNLOCKED){cP.textContent='🏠 '+fmt(sP);cP.className='chip '+(sP>=0?'pos':'neg');}
   else{cP.textContent='🏠 🔒';cP.className='chip pos';cP.title='Clique para desbloquear a área pessoal';}
   document.getElementById('lastSave').textContent=S.saved?'Último salvamento: '+new Date(S.saved).toLocaleString('pt-BR'):'';
-  const cur=document.querySelector('nav button.on');if(cur)show(cur.dataset.pg);
+  const cur=document.querySelector('nav button.on');if(cur)showNow(cur.dataset.pg);
 }
 function fillManualCats(){
   const a=document.getElementById('m-area').value,t=document.getElementById('m-t').value;
@@ -913,6 +952,12 @@ document.addEventListener('DOMContentLoaded',()=>{
     alert(await bioRegister()?'✅ Face ID ativado neste aparelho!':'Não foi possível ativar.');
   };
   if('serviceWorker' in navigator&&location.protocol.indexOf('http')===0)navigator.serviceWorker.register('sw.js').catch(()=>{});
+  // sessão: bloqueio automático + cronômetro + sincronização periódica
+  ['click','keydown','touchstart','input'].forEach(ev=>document.addEventListener(ev,regAct,true));
+  setInterval(tickSess,1000);
+  setInterval(()=>{if(!isLocked()&&syncCfg())cloudPull(true);},30000);
+  document.getElementById('refreshBtn').onclick=()=>cloudPull();
+  document.getElementById('lockBtn').onclick=lockNow;
   document.body.dataset.theme=S.cfg.theme||'light';
   document.getElementById('themeBtn').onclick=()=>{S.cfg.theme=document.body.dataset.theme=(document.body.dataset.theme==='light'?'dark':'light');save();};
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.pg));
@@ -960,8 +1005,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('r-m').value=ultimoMes('I');
   document.getElementById('btnRel').onclick=gerarRel;
   // dados (exportações contêm dados pessoais → senha)
-  document.getElementById('btnExp').onclick=()=>{if(unlockP())exportJson();};
-  document.getElementById('btnCsv').onclick=()=>{if(unlockP())exportCsv();};
+  document.getElementById('btnExp').onclick=async()=>{if(await unlockPAsync())exportJson();};
+  document.getElementById('btnCsv').onclick=async()=>{if(await unlockPAsync())exportCsv();};
   document.getElementById('impFile').onchange=e=>{if(e.target.files[0])importJson(e.target.files[0]);e.target.value='';};
   // sincronização nuvem
   S.cfg.sync=S.cfg.sync||{url:'',key:''};
@@ -987,9 +1032,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   // senha da área pessoal
   const cP=document.getElementById('chipP');
   cP.style.cursor='pointer';
-  cP.onclick=()=>{if(!UNLOCKED)unlockP();};
-  document.getElementById('btnPin').onclick=()=>{
-    if(!unlockP())return;
+  cP.onclick=()=>{if(!UNLOCKED)unlockPAsync();};
+  document.getElementById('btnPin').onclick=async()=>{
+    if(!await unlockPAsync())return;
     const n=prompt('Nova senha da área pessoal:');
     if(n){S.cfg.pinP=hash(n);save();alert('Senha alterada.');}
   };
