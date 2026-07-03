@@ -1,0 +1,126 @@
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Chat test</title>
+<style>
+:root{--bg:#0a1f17;--card:#122f24;--ink:#f5f8f5;--muted:#8fa99b;--line:#214736;--green:#5fca8c;--green-bg:#123a2a;--red:#ec8474;--gold:#d4af37;--gold-dk:#e6c454;--shadow:0 10px 30px rgba(0,0,0,.45);--radius:18px}
+*{box-sizing:border-box}body{margin:0;font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:15px}
+.wrap{max-width:760px;margin:0 auto;height:100vh;display:flex;flex-direction:column}
+.chatfeed{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.bubble{max-width:88%;padding:11px 14px;border-radius:16px;font-size:14px;line-height:1.5}
+.bubble.bot{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
+.bubble.me{align-self:flex-end;background:var(--green-bg);border-bottom-right-radius:4px}
+.bubble.me img{max-width:220px;border-radius:10px;display:block}
+.bubble.status{align-self:flex-start;color:var(--muted);font-style:italic}
+.lcard{align-self:flex-start;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:16px;border-bottom-left-radius:4px;box-shadow:var(--shadow);overflow:hidden}
+.lcard-h{padding:11px 14px;font-weight:800;border-bottom:1px solid var(--line);font-size:14px}
+.lcard.done .lcard-h{color:var(--green);border-bottom:none}
+.lcard-fields{padding:6px 6px}
+.lf{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;font-size:13px;color:var(--muted)}
+.lf:hover{background:var(--bg)}
+.lf b{color:var(--ink);font-size:14px;text-align:right}
+.lf input,.lf select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--gold);border-radius:8px;padding:6px 8px;max-width:180px}
+.lcard-btns{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line)}
+.lcard .done-body{padding:12px 14px}
+.btn{background:linear-gradient(180deg,var(--gold),var(--gold-dk));color:#1a1205;border:none;border-radius:12px;padding:11px 16px;font-size:14px;font-weight:800;cursor:pointer;flex:1}
+.btn.sec{background:transparent;color:var(--ink);border:1px solid var(--line);flex:none;width:46px}
+.composer{display:flex;align-items:flex-end;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--card)}
+.composer textarea{flex:1;min-height:44px;max-height:120px;resize:none;border-radius:22px;padding:11px 14px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line)}
+.attbtn,.sendbtn{flex:none;width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;font-size:20px}
+.attbtn{border:1px solid var(--line);background:transparent;color:var(--ink)}
+.sendbtn{background:linear-gradient(180deg,var(--gold),var(--gold-dk));color:#1a1205;font-weight:800}
+</style></head><body>
+<div class="wrap">
+  <div class="chatfeed" id="chatFeed"></div>
+  <div class="composer">
+    <button class="attbtn" id="attBtn">＋</button>
+    <textarea id="qin" rows="1" placeholder="Escreva um lançamento…"></textarea>
+    <button class="sendbtn" id="btnParse">➤</button>
+  </div>
+</div>
+<script>
+const CATS={I:{E:{'Dízimos':[],'Cultos':[],'Cantinas':[],'Entradas Especiais':[],'Feijoada':[]},S:{'Gastos Igreja':[],'Custo Pastoral':['Pró-labore','Missionários'],'Caridade':[],'Outros Gastos':[]}},P:{E:{'Repasse Igreja':[],'Ofertas Especiais':[],'Salários':[],'Benefícios':[]},S:{'Essenciais':['Mercado','Padaria','Fruteira','Farmácia'],'Moradia':[],'Transporte':[],'Lanches':[],'Outros':[],'Caridade':[]}}};
+const AREAS={I:'Igreja',P:'Pessoal'},TIPOS={E:'Entrada',S:'Saída'};
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=v=>'R$ '+Math.abs(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const pv=s=>{if(typeof s==='number')return s;s=String(s).replace(/[R$\s]/g,'').replace(/\.(?=\d{3})/g,'').replace(',','.');const n=parseFloat(s);return isNaN(n)?0:n;};
+const dBr=d=>d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4);
+let CHAT=[];
+function chatPush(m){m.id=m.id||uid();CHAT.push(m);renderChat();scrollBottom();return m;}
+function removeMsg(id){CHAT=CHAT.filter(m=>m.id!==id);renderChat();}
+function scrollBottom(){const f=document.getElementById('chatFeed');f.scrollTop=f.scrollHeight;}
+function renderMsg(m){
+  if(m.type==='user')return `<div class="bubble me">${esc(m.text)}</div>`;
+  if(m.type==='img')return `<div class="bubble me"><img src="${m.src}"></div>`;
+  if(m.type==='status')return `<div class="bubble status" data-sid="${m.id}">${esc(m.text)}</div>`;
+  if(m.type==='bot')return `<div class="bubble bot">${m.text}</div>`;
+  if(m.type==='card'){const p=m.p;
+    if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Lançamento registrado</div><div class="done-body"><b>${esc(p.n)}</b> · ${fmt(p.v)}<br><span style="color:var(--muted)">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span></div></div>`;
+    const row=(f,ic,lb,val)=>`<div class="lf" data-cardid="${m.id}" data-f="${f}"><span>${ic} ${lb}</span><b>${val}</b></div>`;
+    return `<div class="lcard" data-cardid="${m.id}"><div class="lcard-h">🧾 Lançamento encontrado</div><div class="lcard-fields">`+
+      row('d','📅','Data',dBr(p.d))+row('a','📂','Área',AREAS[p.a])+row('t','⬇','Tipo',TIPOS[p.t])+
+      row('c','📁','Categoria',esc(p.c))+row('s','📌','Sub',esc(p.s||'—'))+row('n','📝','Descrição',esc(p.n))+
+      row('v','💰','Valor',fmt(p.v))+
+      `</div><div class="lcard-btns"><button class="btn" data-act="confirm" data-cardid="${m.id}">✅ Confirmar lançamento</button><button class="btn sec" data-act="cancel" data-cardid="${m.id}">✕</button></div></div>`;
+  }
+  return '';
+}
+function renderChat(){const f=document.getElementById('chatFeed');f.innerHTML=CHAT.length?CHAT.map(renderMsg).join(''):'<div class="bubble bot">👋 Escreva um lançamento (ex.: <b>Fruteira 50 ontem</b>) ou anexe um recibo. Eu monto o cartão aqui para você conferir e confirmar.</div>';}
+function renderCardById(id){const el=document.querySelector(`.lcard[data-cardid="${id}"]`);const m=CHAT.find(x=>x.id===id);if(el&&m)el.outerHTML=renderMsg(m);}
+function editField(lf){
+  const id=lf.dataset.cardid,f=lf.dataset.f,m=CHAT.find(x=>x.id===id);if(!m||m.state!=='edit')return;const p=m.p;
+  let ed;
+  if(f==='d'){ed=`<input type="date" value="${p.d}">`;}
+  else if(f==='a'){ed=`<select><option value="I"${p.a==='I'?' selected':''}>Igreja</option><option value="P"${p.a==='P'?' selected':''}>Pessoal</option></select>`;}
+  else if(f==='t'){ed=`<select><option value="E"${p.t==='E'?' selected':''}>Entrada</option><option value="S"${p.t==='S'?' selected':''}>Saída</option></select>`;}
+  else if(f==='c'){ed=`<select>`+Object.keys(CATS[p.a][p.t]).map(c=>`<option${c===p.c?' selected':''}>${esc(c)}</option>`).join('')+`</select>`;}
+  else if(f==='s'){const subs=CATS[p.a][p.t][p.c]||[];ed=`<select><option value=""></option>`+subs.map(s=>`<option${s===p.s?' selected':''}>${esc(s)}</option>`).join('')+`</select>`;}
+  else if(f==='n'){ed=`<input type="text" value="${esc(p.n)}">`;}
+  else if(f==='v'){ed=`<input type="text" value="${String(p.v).replace('.',',')}">`;}
+  lf.querySelector('b').outerHTML='<b>'+ed+'</b>';
+  const inp=lf.querySelector('input,select');inp.focus();if(inp.select)try{inp.select()}catch(e){}
+  const commit=()=>{
+    const v=inp.value;
+    if(f==='v')p.v=pv(v);
+    else if(f==='a'){p.a=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
+    else if(f==='t'){p.t=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
+    else if(f==='c'){p.c=v;p.s='';}
+    else p[f]=v;
+    renderCardById(id);
+  };
+  inp.addEventListener('change',commit);
+  inp.addEventListener('blur',commit);
+}
+function confirmCard(id){const m=CHAT.find(x=>x.id===id);if(!m||m.state!=='edit')return;if(!m.p.v){alert('Informe um valor');return;}m.state='done';renderCardById(id);}
+function cancelCard(id){removeMsg(id);}
+document.getElementById('chatFeed').addEventListener('click',e=>{
+  const act=e.target.closest('[data-act]');
+  if(act){act.dataset.act==='confirm'?confirmCard(act.dataset.cardid):cancelCard(act.dataset.cardid);return;}
+  const lf=e.target.closest('.lf');
+  if(lf&&!lf.querySelector('input,select'))editField(lf);
+});
+// MOCK parser só para o teste visual
+function mockParse(raw){
+  const v=(raw.match(/\d+[.,]?\d*/)||[0])[0];
+  let a='P',t='S',c='Outros',s='';
+  if(/fruteira/i.test(raw)){c='Essenciais';s='Fruteira';}
+  else if(/mercado/i.test(raw)){c='Essenciais';s='Mercado';}
+  else if(/d[ií]zimo/i.test(raw)){a='I';t='E';c='Dízimos';}
+  const d=/ontem/i.test(raw)?'2026-07-02':'2026-07-03';
+  const n=raw.replace(/\d+[.,]?\d*/,'').replace(/reais|ontem|hoje/gi,'').replace(/\s+/g,' ').trim()||c;
+  return {d,a,t,c,s,n:n.charAt(0).toUpperCase()+n.slice(1),v:pv(v)};
+}
+async function sendText(){
+  const raw=document.getElementById('qin').value.trim();if(!raw)return;document.getElementById('qin').value='';
+  chatPush({type:'user',text:raw});
+  const st=chatPush({type:'status',text:'🤖 Analisando…'});
+  await new Promise(r=>setTimeout(r,500));
+  removeMsg(st.id);
+  chatPush({type:'card',state:'edit',p:mockParse(raw)});
+}
+document.getElementById('btnParse').onclick=sendText;
+document.getElementById('qin').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendText();}});
+document.getElementById('attBtn').onclick=()=>{chatPush({type:'img',src:'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22120%22%3E%3Crect width=%22200%22 height=%22120%22 fill=%22%23444%22/%3E%3Ctext x=%22100%22 y=%2265%22 fill=%22%23fff%22 text-anchor=%22middle%22%3Erecibo%3C/text%3E%3C/svg%3E'});const st=chatPush({type:'status',text:'🔎 Lendo comprovante…'});setTimeout(()=>{removeMsg(st.id);chatPush({type:'card',state:'edit',p:{d:'2026-07-02',a:'P',t:'S',c:'Essenciais',s:'Farmácia',n:'Beterafá',v:27.9}});},900);};
+renderChat();
+// pré-carrega um exemplo
+chatPush({type:'user',text:'Fruteira 50 reais ontem'});
+setTimeout(()=>chatPush({type:'card',state:'edit',p:mockParse('Fruteira 50 reais ontem')}),100);
+</script></body></html>
