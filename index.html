@@ -117,9 +117,8 @@ summary{cursor:pointer;font-weight:700}
 .pthumb img{height:52px;width:52px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 .pthumb .pdf{height:52px;width:52px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;font-size:22px}
 .pthumb button{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:var(--red);color:#fff;font-size:11px;cursor:pointer;line-height:1}
-.msgwrap{position:relative;display:flex;align-self:stretch}
+.msgwrap{position:relative;display:flex;align-self:stretch;justify-content:flex-start}
 .msgwrap:has(.bubble.me){justify-content:flex-end}
-.msgwrap:has(.bubble.bot),.msgwrap:has(.lcard),.msgwrap:has(.blurred){justify-content:flex-start}
 .msgdel{position:absolute;top:-4px;z-index:2;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:11px;cursor:pointer;opacity:0;transition:opacity .15s;line-height:1}
 .msgwrap:has(.bubble.me) .msgdel{left:-6px}
 .msgwrap:has(.bubble.bot) .msgdel,.msgwrap:has(.lcard) .msgdel,.msgwrap:has(.blurred) .msgdel{right:-6px}
@@ -1076,8 +1075,8 @@ function maybeBlur(inner,personal){
 }
 function wrapDel(id,inner){return `<div class="msgwrap" data-mid="${id}"><button class="msgdel" data-del="${id}" title="Excluir do histórico">✕</button>${inner}</div>`;}
 function chatMsg(m){
-  if(m.type==='user')return wrapDel(m.id,`<div class="bubble me">${esc(m.text).replace(/\n/g,'<br>')}</div>`);
-  if(m.type==='img')return wrapDel(m.id,`<div class="bubble me"><img src="${m.src}" onload="scrollChat()"></div>`);
+  if(m.type==='user')return wrapDel(m.id,maybeBlur(`<div class="bubble me">${esc(m.text).replace(/\n/g,'<br>')}</div>`,m.personal));
+  if(m.type==='img')return wrapDel(m.id,maybeBlur(`<div class="bubble me"><img src="${m.src}" onload="scrollChat()"></div>`,m.personal));
   if(m.type==='status')return `<div class="bubble bot msg-status" data-sid="${m.id}">${esc(m.text)}</div>`;
   if(m.type==='bot')return wrapDel(m.id,maybeBlur(`<div class="bubble bot">${m.html||esc(m.text)}</div>`,m.personal));
   if(m.type==='card'){const h=cardHtml(m);return m.state==='done'?wrapDel(m.id,maybeBlur(h,m.p&&m.p.a==='P')):h;}
@@ -1172,34 +1171,36 @@ function answerQuery(raw){
 }
 function renderQueryAnswer(raw){
   const {list,per,kws}=answerQuery(raw);
-  if(!list.length){chatPush({type:'bot',text:'Não achei lançamentos para isso ('+per.label+').'});return;}
+  if(!list.length){chatPush({type:'bot',text:'Não achei lançamentos para isso ('+per.label+').'});return false;}
   const total=sum(list),personal=list.some(x=>x.a==='P');
   const byCat={};list.forEach(x=>{byCat[x.c]=(byCat[x.c]||0)+x.v;});
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   const html=`<b>${kws.length?esc(kws.join(', '))+' · ':''}${per.label}</b><br>Total: <b>${fmt(total)}</b> · ${list.length} lançamento${list.length>1?'s':''}<br>`+cats.map(([c,v])=>`• ${esc(c)}: ${fmt(v)}`).join('<br>');
   chatPush({type:'bot',html,personal});
+  return personal;
 }
 async function chatSend(){
   const qel=document.getElementById('qin');const raw=(qel.value||'').trim();
   if(PENDING_IMGS.length){const files=PENDING_IMGS.slice();PENDING_IMGS=[];renderPending();qel.value='';await chatImages(files,raw);return;}
   if(!raw)return;
   qel.value='';
-  chatPush({type:'user',text:raw});
-  if(looksLikeQuestion(raw)){renderQueryAnswer(raw);return;}
+  const um=chatPush({type:'user',text:raw});
+  if(looksLikeQuestion(raw)){if(renderQueryAnswer(raw)){um.personal=true;renderChat();}return;}
   const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Analisando…':'Analisando…'});
   let items=null;
   if(S.cfg.ai&&syncCfg()&&navigator.onLine){try{items=await aiParse(raw);}catch(e){}}
   if(!items||!items.length)items=raw.split('\n').map(parseLine).filter(Boolean);
   chatRemove(st.id);
   if(!items||!items.length){chatPush({type:'bot',text:'Não entendi. Tente "dízimo Carlos 150", "mercado 120 hoje" ou pergunte "quanto gastei com lanches em maio?".'});return;}
+  if(items.some(p=>p&&p.a==='P'))um.personal=true;
   items.forEach(p=>chatPush({type:'card',p}));
 }
 async function chatImages(files,note){
   note=note||'';
   for(const f of files){
     if(f&&f.type==='application/pdf'){chatPush({type:'bot',text:'📄 Leitura de PDF ainda não é automática — envie um print/imagem do documento.'});continue;}
-    chatPush({type:'img',src:URL.createObjectURL(f)});
-    if(note)chatPush({type:'user',text:note});
+    const im=chatPush({type:'img',src:URL.createObjectURL(f)});
+    const cap=note?chatPush({type:'user',text:note}):null;
     const st=chatPush({type:'status',text:'🔎 Lendo comprovante…'});
     let items=null;
     try{
@@ -1209,8 +1210,10 @@ async function chatImages(files,note){
       if(!items||!items.length)items=smartParse(r.data.text,note);
     }catch(e){}
     chatRemove(st.id);
-    if(items&&items.length)items.forEach(p=>chatPush({type:'card',p}));
-    else chatPush({type:'bot',text:'Não consegui ler o comprovante. Tente uma foto mais nítida ou digite o lançamento.'});
+    if(items&&items.length){
+      if(items.some(p=>p&&p.a==='P')){im.personal=true;if(cap)cap.personal=true;}
+      items.forEach(p=>chatPush({type:'card',p}));
+    }else chatPush({type:'bot',text:'Não consegui ler o comprovante. Tente uma foto mais nítida ou digite o lançamento.'});
   }
 }
 function smartParse(text,note){
