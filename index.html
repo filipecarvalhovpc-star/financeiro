@@ -103,7 +103,7 @@ summary{cursor:pointer;font-weight:700}
 .lcard-h{padding:11px 14px;font-weight:800;border-bottom:1px solid var(--line);font-size:14px}
 .lcard.done .lcard-h{color:var(--green);border-bottom:none}
 .lcard-fields{padding:4px 6px}
-.lf{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;font-size:13px;color:var(--muted)}
+.lf{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;border-radius:10px;cursor:pointer;font-size:13px;color:var(--muted)}
 .lf:hover{background:var(--bg)}
 .lf b{color:var(--ink);font-size:14px;text-align:right}
 .lf input,.lf select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--gold);border-radius:8px;padding:6px 8px;max-width:190px}
@@ -129,7 +129,7 @@ summary{cursor:pointer;font-weight:700}
 .bubble{max-width:94%;padding:10px 13px;border-radius:16px;font-size:14px;line-height:1.5}
 .bubble.bot{align-self:flex-start;background:var(--bg);border:1px solid var(--line);border-bottom-left-radius:4px}
 .bubble.me{align-self:flex-end;background:var(--green-bg);color:var(--ink);border-bottom-right-radius:4px}
-.bubble.me img{height:120px;max-width:100%;object-fit:cover;border-radius:10px;display:block;margin-bottom:4px}
+.bubble.me img{height:88px;max-width:130px;object-fit:cover;border-radius:10px;display:block;margin-bottom:4px}
 .bubble.me input{width:100%;margin-top:6px}
 #preview:not(:empty){align-self:stretch;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:8px;box-shadow:var(--shadow)}
 .composer{display:flex;align-items:flex-end;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--card);position:relative;border-radius:0 0 var(--radius) var(--radius)}
@@ -1077,7 +1077,7 @@ function maybeBlur(inner,personal){
 function wrapDel(id,inner){return `<div class="msgwrap" data-mid="${id}"><button class="msgdel" data-del="${id}" title="Excluir do histórico">✕</button>${inner}</div>`;}
 function chatMsg(m){
   if(m.type==='user')return wrapDel(m.id,`<div class="bubble me">${esc(m.text).replace(/\n/g,'<br>')}</div>`);
-  if(m.type==='img')return wrapDel(m.id,`<div class="bubble me"><img src="${m.src}"></div>`);
+  if(m.type==='img')return wrapDel(m.id,`<div class="bubble me"><img src="${m.src}" onload="scrollChat()"></div>`);
   if(m.type==='status')return `<div class="bubble bot msg-status" data-sid="${m.id}">${esc(m.text)}</div>`;
   if(m.type==='bot')return wrapDel(m.id,maybeBlur(`<div class="bubble bot">${m.html||esc(m.text)}</div>`,m.personal));
   if(m.type==='card'){const personal=m.p&&m.p.a==='P';const h=cardHtml(m);return m.state==='done'?wrapDel(m.id,maybeBlur(h,personal)):maybeBlur(h,personal);}
