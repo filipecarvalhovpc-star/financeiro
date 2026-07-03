@@ -1080,7 +1080,7 @@ function chatMsg(m){
   if(m.type==='img')return wrapDel(m.id,`<div class="bubble me"><img src="${m.src}" onload="scrollChat()"></div>`);
   if(m.type==='status')return `<div class="bubble bot msg-status" data-sid="${m.id}">${esc(m.text)}</div>`;
   if(m.type==='bot')return wrapDel(m.id,maybeBlur(`<div class="bubble bot">${m.html||esc(m.text)}</div>`,m.personal));
-  if(m.type==='card'){const personal=m.p&&m.p.a==='P';const h=cardHtml(m);return m.state==='done'?wrapDel(m.id,maybeBlur(h,personal)):maybeBlur(h,personal);}
+  if(m.type==='card'){const h=cardHtml(m);return m.state==='done'?wrapDel(m.id,maybeBlur(h,m.p&&m.p.a==='P')):h;}
   return '';
 }
 function cardHtml(m){
@@ -1130,6 +1130,12 @@ function confirmCard(id){
   m.state='done';renderChat();toast('✅ Registrado');
 }
 function cancelCard(id){chatRemove(id);}
+function unlockPersonalChat(){
+  if(UNLOCKED){renderChat();return;}
+  const p=prompt('🔒 Digite a senha pessoal para ver este item:');
+  if(p==null)return;
+  if(hash(p)===pinHash()){UNLOCKED=true;refresh();renderChat();}else alert('Senha incorreta.');
+}
 /*==== Anexos com legenda (anexa → escreve → envia) ====*/
 function stageAttach(files){for(const f of files){if(f)PENDING_IMGS.push(f);}renderPending();const q=document.getElementById('qin');if(q)q.focus();}
 function removePending(i){PENDING_IMGS.splice(i,1);renderPending();}
@@ -1794,7 +1800,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     const del=e.target.closest('[data-del]');
     if(del){if(confirm('Excluir esta mensagem do histórico?'))chatRemove(del.dataset.del);return;}
     const bl=e.target.closest('.blurred');
-    if(bl){unlockPAsync().then(ok=>{if(ok)renderChat();});return;}
+    if(bl){unlockPersonalChat();return;}
     const act=e.target.closest('[data-act]');
     if(act){act.dataset.act==='confirm'?confirmCard(act.dataset.cardid):cancelCard(act.dataset.cardid);return;}
     const lf=e.target.closest('.lf');
