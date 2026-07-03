@@ -112,6 +112,20 @@ summary{cursor:pointer;font-weight:700}
 .lcard-btns .btn.sec{flex:none;width:46px}
 .lcard .done-body{padding:12px 14px}
 .msg-status{color:var(--muted);font-style:italic}
+.pending{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--line);background:var(--bg)}
+.pthumb{position:relative}
+.pthumb img{height:52px;width:52px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.pthumb .pdf{height:52px;width:52px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;font-size:22px}
+.pthumb button{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:var(--red);color:#fff;font-size:11px;cursor:pointer;line-height:1}
+.msgwrap{position:relative;display:flex;align-self:stretch}
+.msgwrap:has(.bubble.me){justify-content:flex-end}
+.msgwrap:has(.bubble.bot),.msgwrap:has(.lcard),.msgwrap:has(.blurred){justify-content:flex-start}
+.msgdel{position:absolute;top:-4px;z-index:2;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:11px;cursor:pointer;opacity:0;transition:opacity .15s;line-height:1}
+.msgwrap:has(.bubble.me) .msgdel{left:-6px}
+.msgwrap:has(.bubble.bot) .msgdel,.msgwrap:has(.lcard) .msgdel,.msgwrap:has(.blurred) .msgdel{right:-6px}
+.msgwrap:hover .msgdel{opacity:1}
+.blurred{position:relative;filter:blur(7px);cursor:pointer}
+.blur-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;filter:none;font-size:12px;font-weight:700;color:var(--ink);background:rgba(0,0,0,.15);border-radius:14px;text-align:center;padding:6px}
 .bubble{max-width:94%;padding:10px 13px;border-radius:16px;font-size:14px;line-height:1.5}
 .bubble.bot{align-self:flex-start;background:var(--bg);border:1px solid var(--line);border-bottom-left-radius:4px}
 .bubble.me{align-self:flex-end;background:var(--green-bg);color:var(--ink);border-bottom-right-radius:4px}
@@ -201,6 +215,7 @@ summary{cursor:pointer;font-weight:700}
 <section class="page on" id="pg-lancar">
   <div class="chatcard">
     <div class="chatfeed" id="chatFeed"></div>
+    <div class="pending" id="pendStrip" style="display:none"></div>
     <div class="composer">
       <div class="attach">
         <button class="attbtn" id="attBtn" type="button" title="Anexar">＋</button>
@@ -1049,18 +1064,23 @@ async function aiParse(text){
   }catch(e){return null;}
 }
 /*==== CONVERSA — a aba Lançar é um chat de mensagens vivas ====*/
-let CHAT=[];
+let CHAT=[], PENDING_IMGS=[];
 function chatPush(m){m.id=m.id||uid();CHAT.push(m);renderChat();scrollChat();return m;}
 function chatRemove(id){CHAT=CHAT.filter(m=>m.id!==id);renderChat();}
 function scrollChat(){const f=document.getElementById('chatFeed');if(f)f.scrollTop=f.scrollHeight;}
 function chatStatus(id,text){const m=CHAT.find(x=>x.id===id);if(m){m.text=text;const el=document.querySelector('.msg-status[data-sid="'+id+'"]');if(el)el.textContent=text;}}
 const chatWelcome='<div class="bubble bot">👋 Escreva um lançamento — pode ser solto. Ex.: <b>dízimo Carlos 150</b>, <b>paguei 65 no mercado ontem</b>. Anexe/cole um recibo pelo ＋. Você também pode perguntar, ex.: <b>quanto gastei com lanches em maio?</b></div>';
+function maybeBlur(inner,personal){
+  if(personal&&!UNLOCKED)return `<div class="blurred" data-unlock="1">${inner}<div class="blur-hint">🔒 Toque e informe a senha pessoal</div></div>`;
+  return inner;
+}
+function wrapDel(id,inner){return `<div class="msgwrap" data-mid="${id}"><button class="msgdel" data-del="${id}" title="Excluir do histórico">✕</button>${inner}</div>`;}
 function chatMsg(m){
-  if(m.type==='user')return `<div class="bubble me">${esc(m.text).replace(/\n/g,'<br>')}</div>`;
-  if(m.type==='img')return `<div class="bubble me"><img src="${m.src}"></div>`;
+  if(m.type==='user')return wrapDel(m.id,`<div class="bubble me">${esc(m.text).replace(/\n/g,'<br>')}</div>`);
+  if(m.type==='img')return wrapDel(m.id,`<div class="bubble me"><img src="${m.src}"></div>`);
   if(m.type==='status')return `<div class="bubble bot msg-status" data-sid="${m.id}">${esc(m.text)}</div>`;
-  if(m.type==='bot')return `<div class="bubble bot">${m.html||esc(m.text)}</div>`;
-  if(m.type==='card')return cardHtml(m);
+  if(m.type==='bot')return wrapDel(m.id,maybeBlur(`<div class="bubble bot">${m.html||esc(m.text)}</div>`,m.personal));
+  if(m.type==='card'){const personal=m.p&&m.p.a==='P';const h=cardHtml(m);return m.state==='done'?wrapDel(m.id,maybeBlur(h,personal)):maybeBlur(h,personal);}
   return '';
 }
 function cardHtml(m){
@@ -1107,23 +1127,69 @@ function confirmCard(id){
   if(p.pendRef)abatePendByName(p.pendRef,p.v);
   else if(p.t==='S'){const pend=findPendByName(p.n,p.a);if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+'?'))pend.pago+=p.v;}
   save();
-  m.state='done';renderCardById(id);toast('✅ Registrado');
+  m.state='done';renderChat();toast('✅ Registrado');
 }
 function cancelCard(id){chatRemove(id);}
+/*==== Anexos com legenda (anexa → escreve → envia) ====*/
+function stageAttach(files){for(const f of files){if(f)PENDING_IMGS.push(f);}renderPending();const q=document.getElementById('qin');if(q)q.focus();}
+function removePending(i){PENDING_IMGS.splice(i,1);renderPending();}
+function renderPending(){
+  const el=document.getElementById('pendStrip');if(!el)return;
+  if(!PENDING_IMGS.length){el.innerHTML='';el.style.display='none';return;}
+  el.style.display='flex';
+  el.innerHTML=PENDING_IMGS.map((f,i)=>`<div class="pthumb">${f.type==='application/pdf'?'<div class="pdf">📄</div>':`<img src="${URL.createObjectURL(f)}">`}<button data-pdel="${i}">✕</button></div>`).join('')+`<span class="hint" style="align-self:center">Escreva uma legenda (opcional) e envie ➤</span>`;
+}
+/*==== Perguntas na conversa (consultas) ====*/
+function looksLikeQuestion(raw){return /\?/.test(raw)||/^\s*(quanto|quantos|quanta|qual|quais|quando|onde|quem|me diga|mostra|mostre|resumo|saldo)\b/i.test(raw);}
+const MES_NOMES=['janeiro','fevereiro','marco','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+function queryPeriod(raw){
+  const now=new Date();let y=now.getFullYear(),m=null,gotY=false;
+  const ym=raw.match(/\b(20\d{2})\b/);if(ym){y=+ym[1];gotY=true;}
+  const nt=aliasNorm(raw);
+  for(let i=0;i<12;i++){if(new RegExp('\\b'+MES_NOMES[i]+'\\b').test(nt)){m=i+1;break;}}
+  if(/\b(este|neste) mes\b|\bmes atual\b/.test(nt)){m=now.getMonth()+1;y=now.getFullYear();}
+  if(/\bmes passado\b/.test(nt)){const d=new Date(now.getFullYear(),now.getMonth()-1,1);m=d.getMonth()+1;y=d.getFullYear();}
+  if(m){const mm=String(m).padStart(2,'0');return {label:MESES[m-1]+' de '+y,test:x=>x.d.slice(0,7)===y+'-'+mm};}
+  if(gotY)return {label:'ano de '+y,test:x=>x.d.slice(0,4)===String(y)};
+  return {label:'no total',test:_=>true};
+}
+const QSTOP=new Set('quanto quantos quanta qual quais quando onde quem como com de do da no na em os as um uma que eu meu minha total gastei gasto gastos paguei recebi entrou entrada saida despesa este mes passado neste reais real foi sao ate pra para outros outro mostra mostre resumo saldo'.split(' '));
+function queryKeywords(raw){return aliasNorm(raw).split(' ').filter(w=>w.length>=4&&!QSTOP.has(w)&&MES_NOMES.indexOf(w)<0);}
+function answerQuery(raw){
+  const per=queryPeriod(raw);
+  let tipo=null;if(/gast|paguei|sa[ií]da|despesa|comprei/i.test(raw))tipo='S';else if(/recebi|entrou|entrada|ganhei|arrecad|d[ií]zimo/i.test(raw))tipo='E';
+  let area=null;if(/\bigreja\b/i.test(raw))area='I';else if(/\bpessoal\b|\bmeu\b|\bminha\b/i.test(raw))area='P';
+  const kws=queryKeywords(raw);
+  const match=x=>{if(!per.test(x))return false;if(tipo&&x.t!==tipo)return false;if(area&&x.a!==area)return false;
+    if(kws.length){const hay=aliasNorm((x.c||'')+' '+(x.s||'')+' '+(x.n||''));if(!kws.some(k=>hay.includes(k)))return false;}return true;};
+  return {list:S.tx.filter(match),per,kws};
+}
+function renderQueryAnswer(raw){
+  const {list,per,kws}=answerQuery(raw);
+  if(!list.length){chatPush({type:'bot',text:'Não achei lançamentos para isso ('+per.label+').'});return;}
+  const total=sum(list),personal=list.some(x=>x.a==='P');
+  const byCat={};list.forEach(x=>{byCat[x.c]=(byCat[x.c]||0)+x.v;});
+  const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  const html=`<b>${kws.length?esc(kws.join(', '))+' · ':''}${per.label}</b><br>Total: <b>${fmt(total)}</b> · ${list.length} lançamento${list.length>1?'s':''}<br>`+cats.map(([c,v])=>`• ${esc(c)}: ${fmt(v)}`).join('<br>');
+  chatPush({type:'bot',html,personal});
+}
 async function chatSend(){
-  const raw=(document.getElementById('qin').value||'').trim();if(!raw)return;
-  document.getElementById('qin').value='';
+  const qel=document.getElementById('qin');const raw=(qel.value||'').trim();
+  if(PENDING_IMGS.length){const files=PENDING_IMGS.slice();PENDING_IMGS=[];renderPending();qel.value='';await chatImages(files,raw);return;}
+  if(!raw)return;
+  qel.value='';
   chatPush({type:'user',text:raw});
+  if(looksLikeQuestion(raw)){renderQueryAnswer(raw);return;}
   const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Analisando…':'Analisando…'});
   let items=null;
   if(S.cfg.ai&&syncCfg()&&navigator.onLine){try{items=await aiParse(raw);}catch(e){}}
   if(!items||!items.length)items=raw.split('\n').map(parseLine).filter(Boolean);
   chatRemove(st.id);
-  if(!items||!items.length){chatPush({type:'bot',text:'Não entendi um lançamento aí. Tente algo como "dízimo Carlos 150" ou "mercado 120 hoje".'});return;}
+  if(!items||!items.length){chatPush({type:'bot',text:'Não entendi. Tente "dízimo Carlos 150", "mercado 120 hoje" ou pergunte "quanto gastei com lanches em maio?".'});return;}
   items.forEach(p=>chatPush({type:'card',p}));
 }
-async function chatImages(files){
-  const note=(document.getElementById('qin').value||'').trim();document.getElementById('qin').value='';
+async function chatImages(files,note){
+  note=note||'';
   for(const f of files){
     if(f&&f.type==='application/pdf'){chatPush({type:'bot',text:'📄 Leitura de PDF ainda não é automática — envie um print/imagem do documento.'});continue;}
     chatPush({type:'img',src:URL.createObjectURL(f)});
@@ -1712,7 +1778,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     for(const it of items){
       if(it.type&&it.type.indexOf('image')===0){
         const f=it.getAsFile();
-        if(f){e.preventDefault();chatImages([f]);return;}
+        if(f){e.preventDefault();stageAttach([f]);return;}
       }
     }
   });
@@ -1723,12 +1789,21 @@ document.addEventListener('DOMContentLoaded',()=>{
   const fab=document.getElementById('fab');if(fab)fab.onclick=()=>show('lancar');
   document.getElementById('btnParse').onclick=chatSend;
   document.getElementById('qin').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();chatSend();}});
-  document.getElementById('chatFeed').addEventListener('click',e=>{
+  const feed=document.getElementById('chatFeed');
+  feed.addEventListener('click',e=>{
+    const del=e.target.closest('[data-del]');
+    if(del){if(confirm('Excluir esta mensagem do histórico?'))chatRemove(del.dataset.del);return;}
+    const bl=e.target.closest('.blurred');
+    if(bl){unlockPAsync().then(ok=>{if(ok)renderChat();});return;}
     const act=e.target.closest('[data-act]');
     if(act){act.dataset.act==='confirm'?confirmCard(act.dataset.cardid):cancelCard(act.dataset.cardid);return;}
     const lf=e.target.closest('.lf');
     if(lf&&!lf.querySelector('input,select'))editField(lf);
   });
+  let lpTimer=null;
+  feed.addEventListener('touchstart',e=>{const w=e.target.closest('.msgwrap');if(!w)return;const mid=w.dataset.mid;lpTimer=setTimeout(()=>{if(confirm('Excluir esta mensagem do histórico?'))chatRemove(mid);},550);},{passive:true});
+  feed.addEventListener('touchend',()=>clearTimeout(lpTimer),{passive:true});
+  feed.addEventListener('touchmove',()=>clearTimeout(lpTimer),{passive:true});
   renderChat();
   // filtros movimentos
   ['f-area','f-t','f-m','f-q'].forEach(id=>{const el=document.getElementById(id);el.onchange=renderMov;el.oninput=renderMov;});
@@ -1743,11 +1818,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('attBtn').onclick=e=>{e.stopPropagation();document.getElementById('attMenu').classList.toggle('open');};
   document.addEventListener('click',e=>{if(!(e.target&&e.target.closest&&e.target.closest('.attach')))closeAtt();});
   ['ocrCam','ocrFile'].forEach(id=>document.getElementById(id).onchange=e=>{
-    if(e.target.files.length)chatImages([...e.target.files]);e.target.value='';closeAtt();});
+    if(e.target.files.length)stageAttach([...e.target.files]);e.target.value='';closeAtt();});
   document.getElementById('ocrDoc').onchange=e=>{
     const f=e.target.files[0];e.target.value='';closeAtt();
-    if(f)chatImages([f]);
+    if(f)stageAttach([f]);
   };
+  document.getElementById('pendStrip').onclick=e=>{const b=e.target.closest('[data-pdel]');if(b)removePending(+b.dataset.pdel);};
   // Colar print copiado (iPhone: Compartilhar → Copiar → aqui): lê a imagem da área de transferência
   document.getElementById('btnPaste').onclick=async()=>{
     closeAtt();
@@ -1756,7 +1832,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       const items=await navigator.clipboard.read();
       for(const it of items){
         const type=(it.types||[]).find(t=>t.indexOf('image/')===0);
-        if(type){const blob=await it.getType(type);chatImages([new File([blob],'print.png',{type})]);return;}
+        if(type){const blob=await it.getType(type);stageAttach([new File([blob],'print.png',{type})]);return;}
       }
       chatPush({type:'bot',text:'Não achei imagem copiada. Tire o print, toque em Compartilhar → Copiar e volte aqui.'});
     }catch(e){chatPush({type:'bot',text:'Não consegui colar automaticamente. Toque e segure no campo e escolha "Colar".'});}
