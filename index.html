@@ -62,7 +62,7 @@ th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5p
 td.num,th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 tr.total td{font-weight:800;border-top:2px solid var(--line)}
 .pos{color:var(--green)} .neg{color:var(--red)}
-textarea,input,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px;outline:none;transition:border-color .15s}
+textarea,input,select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px;outline:none;transition:border-color .15s}
 textarea:focus,input:focus,select:focus{border-color:var(--gold)}
 textarea{width:100%;min-height:110px;resize:vertical}
 input,select{padding:7px 9px}
@@ -106,7 +106,7 @@ summary{cursor:pointer;font-weight:700}
 .lf{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;border-radius:10px;cursor:pointer;font-size:13px;color:var(--muted)}
 .lf:hover{background:var(--bg)}
 .lf b{color:var(--ink);font-size:14px;text-align:right}
-.lf input,.lf select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--gold);border-radius:8px;padding:6px 8px;max-width:190px}
+.lf input,.lf select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--gold);border-radius:8px;padding:6px 8px;max-width:190px}
 .lcard-btns{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line)}
 .lcard-btns .btn{flex:1}
 .lcard-btns .btn.sec{flex:none;width:46px}
@@ -172,7 +172,7 @@ summary{cursor:pointer;font-weight:700}
   nav button .nvi{margin-right:0;font-size:24px;line-height:1}
   nav button .nvt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   nav button.on{background:transparent;color:var(--gold);font-weight:800;box-shadow:none}
-  #fab{display:flex;position:fixed;right:16px;bottom:calc(96px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;background:linear-gradient(180deg,var(--gold),var(--gold-dk));color:#1a1205;border:none;font-size:32px;line-height:1;align-items:center;justify-content:center;box-shadow:0 8px 22px rgba(212,175,55,.5);z-index:21;cursor:pointer}
+  #fab{display:none!important}
 }
 </style>
 </head>
