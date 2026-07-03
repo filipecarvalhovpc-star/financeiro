@@ -149,6 +149,7 @@ summary{cursor:pointer;font-weight:700}
   <h1><span style="color:var(--gold);font-weight:800">AD Ágape</span> <span class="hint">Gestão financeira</span></h1>
   <span id="chipI" class="chip pos"></span>
   <span id="chipP" class="chip pos"></span>
+  <span id="modeChip" class="chip" style="background:var(--blue-bg);color:var(--blue);display:none">👁 Consulta</span>
   <span id="syncChip" class="hint no-print"></span>
   <span id="sessChip" class="hint no-print" title="Tempo até o bloqueio automático"></span>
   <button class="icon no-print" id="dadosBtn" title="Configurações e dados">⚙️</button>
@@ -535,6 +536,7 @@ function ehDuplicado(p){
   return S.tx.some(x=>x.a===p.a&&x.t===p.t&&x.c===p.c&&Math.abs(x.v-p.v)<0.005&&aliasNorm(x.n||'')===nn&&Math.abs(new Date(x.d)-new Date(p.d))<=2*864e5);
 }
 function confirmPrev(){
+  if(!requireEdit())return;
   let msgs=[];
   PREV.forEach(p=>{
     if(!p.v){msgs.push('Ignorado (valor zero): '+p.n);return;}
@@ -614,6 +616,7 @@ function renderMov(){
   </tr>`).join('')+(list.length>400?'<tr><td colspan="7" class="hint">Mostrando 400 de '+list.length+'…</td></tr>':'');
 }
 function delTx(id){
+  if(!requireEdit())return;
   const tx=S.tx.find(x=>x.id===id);if(!tx)return;
   if(!confirm('Excluir "'+tx.n+'" ('+fmt(tx.v)+')?'))return;
   S.del=S.del||[];S.del.push(id);
@@ -778,6 +781,7 @@ function relDizimos(y){
    `<tr class="total"><td>TOTAL (${nomes.length} dizimistas)</td>${months.map(m=>`<td class="num">${fmt(diz.filter(x=>mk(x.d)===m).reduce((s,x)=>s+x.v,0))}</td>`).join('')}<td class="num">${fmt(sum(diz))}</td></tr></table></div>`;
 }
 function gerarRel(){
+  if(!requireEdit())return;
   const tipo=document.getElementById('r-tipo').value,a=document.getElementById('r-area').value,
         m=document.getElementById('r-m').value||ultimoMes(a),y=document.getElementById('r-ano').value;
   if((tipo==='mensal'||tipo==='anual')&&a==='P'&&!UNLOCKED){unlockPAsync().then(ok=>{if(ok)gerarRel();});return;}
@@ -870,6 +874,7 @@ function fillEditSubs(){
   document.getElementById('e-s').innerHTML=subOptions(a,t,c,'');
 }
 function editTx(id){
+  if(!requireEdit())return;
   const x=S.tx.find(t=>t.id===id);if(!x)return;
   EDIT_ID=id;const g=i=>document.getElementById(i);
   g('e-d').value=x.d;g('e-area').value=x.a;g('e-t').value=x.t;
@@ -1051,7 +1056,7 @@ function addAliasRule(nome,v,al){
   }
   return true;
 }
-function delAlias(key){aliasGuard();if(!(key in S.alias))return;delete S.alias[key];S.del=S.del||[];S.del.push(key);save();}
+function delAlias(key){if(!requireEdit())return;aliasGuard();if(!(key in S.alias))return;delete S.alias[key];S.del=S.del||[];S.del.push(key);save();}
 function fillAliasCats(){const a=document.getElementById('al-area').value,t=document.getElementById('al-tipo').value;document.getElementById('al-cat').innerHTML=catOptions(a,t,'');fillAliasSubs();}
 function fillAliasSubs(){const a=document.getElementById('al-area').value,t=document.getElementById('al-tipo').value,c=document.getElementById('al-cat').value;document.getElementById('al-sub').innerHTML=subOptions(a,t,c,'');}
 function renderAliases(){
@@ -1066,18 +1071,32 @@ function renderAliases(){
 }
 
 /*==== SENHA DE ABERTURA DO SISTEMA ====*/
-const SYS_DEFAULT='1994579480'; /* hash da senha de abertura */
+const SYS_DEFAULT='1994579480'; /* hash da senha geral /7898944# */
 function pinSysHash(){return S.cfg.pinSys||SYS_DEFAULT;}
+function pinViewHash(){return S.cfg.pinView||hash('2880');} /* senha de consulta */
+let EDIT_OK=false; /* modo completo: pode lançar/editar/excluir/gerar relatório */
+function unlockDone(i){
+  i.value='';document.getElementById('lock-msg').textContent='';
+  document.getElementById('lock').classList.add('off');
+  updateModeBadge();bioOffer();
+}
 function trySysUnlock(){
-  const i=document.getElementById('lock-in');
-  if(hash(i.value)===pinSysHash()){
-    i.value='';document.getElementById('lock-msg').textContent='';
-    document.getElementById('lock').classList.add('off');
-    bioOffer();
-  }else{
-    document.getElementById('lock-msg').textContent='Senha incorreta.';
-    i.value='';i.focus();
-  }
+  const i=document.getElementById('lock-in');const h=hash(i.value);
+  if(h===pinSysHash()){EDIT_OK=true;unlockDone(i);}
+  else if(h===pinViewHash()){EDIT_OK=false;unlockDone(i);}
+  else{document.getElementById('lock-msg').textContent='Senha incorreta.';i.value='';i.focus();}
+}
+function updateModeBadge(){
+  const c=document.getElementById('modeChip');if(!c)return;
+  c.textContent='👁 Consulta';c.style.display=EDIT_OK?'none':'inline-block';
+}
+/* Exige a senha geral para lançar/editar/excluir/gerar relatório quando em modo consulta */
+function requireEdit(){
+  if(EDIT_OK)return true;
+  const p=prompt('🔒 Modo consulta.\nPara lançar, editar, excluir ou gerar relatório, digite a senha geral:');
+  if(p===null)return false;
+  if(hash(p)===pinSysHash()){EDIT_OK=true;updateModeBadge();toast('✅ Modo completo liberado');return true;}
+  alert('Senha incorreta.');return false;
 }
 
 /*==== FACE ID / BIOMETRIA (WebAuthn) ====*/
@@ -1222,6 +1241,7 @@ function renderPend(){
   el.innerHTML=grp('I','⛪ Da Igreja')+grp('P','🏠 Pessoais');
 }
 function addPendLines(){
+  if(!requireEdit())return;
   pendGuard();
   let n=0;
   document.getElementById('pendIn').value.split('\n').forEach(l=>{
@@ -1241,6 +1261,7 @@ function addPendLines(){
   else alert('Escreva a descrição e o valor — ex.: cartão nubank 1.500');
 }
 function abatePend(id){
+  if(!requireEdit())return;
   pendGuard();
   const p=S.pend.find(x=>x.id===id);if(!p)return;
   const v=pv(prompt('Valor a abater de "'+p.desc+'"\n(restante '+fmt(Math.max(0,p.total-p.pago))+'):')||'');
@@ -1267,7 +1288,7 @@ function findPendByName(nome,area){
   });
   return bestScore>0?best:null;
 }
-function delPend(id){if(confirm('Excluir pendência?')){pendGuard();S.del=S.del||[];S.del.push(id);S.pend=S.pend.filter(p=>p.id!==id);save();}}
+function delPend(id){if(!requireEdit())return;if(confirm('Excluir pendência?')){pendGuard();S.del=S.del||[];S.del.push(id);S.pend=S.pend.filter(p=>p.id!==id);save();}}
 
 /*==== CONSELHEIROS FINANCEIROS (Igreja e Pessoal) ====*/
 function renderConselheiro(){
@@ -1333,7 +1354,7 @@ let LAST_ACT=Date.now();
 function regAct(){LAST_ACT=Date.now();}
 function isLocked(){return !document.getElementById('lock').classList.contains('off');}
 function lockNow(){
-  UNLOCKED=false;
+  UNLOCKED=false;EDIT_OK=false;updateModeBadge();
   document.getElementById('lock').classList.remove('off');
   document.getElementById('lock-msg').textContent='';
   const b=document.getElementById('lock-bio');
@@ -1402,7 +1423,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(bioAvailable()&&localStorage.getItem(BIOKEY)){
     bioBtn.style.display='block';
     bioBtn.onclick=async()=>{
-      if(await bioUnlock())document.getElementById('lock').classList.add('off');
+      if(await bioUnlock()){EDIT_OK=true;updateModeBadge();document.getElementById('lock').classList.add('off');}
       else document.getElementById('lock-msg').textContent='Não deu certo — use a senha.';
     };
     setTimeout(()=>bioBtn.click(),400);
@@ -1448,6 +1469,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('al-cat').onchange=fillAliasSubs;
   fillAliasCats();
   document.getElementById('btnAliasAdd').onclick=()=>{
+    if(!requireEdit())return;
     const g=id=>document.getElementById(id);
     const nome=g('al-nome').value.trim();
     if(nome.length<3){alert('Escreva o nome que aparece no recibo (ao menos 3 letras).');return;}
@@ -1484,6 +1506,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('m-c').onchange=fillManualSubs;
   fillManualCats();
   document.getElementById('btnManual').onclick=()=>{
+    if(!requireEdit())return;
     const p={d:document.getElementById('m-d').value,a:document.getElementById('m-area').value,t:document.getElementById('m-t').value,
       c:document.getElementById('m-c').value,s:document.getElementById('m-s').value,n:document.getElementById('m-n').value||document.getElementById('m-c').value,
       v:pv(document.getElementById('m-v').value)};
@@ -1604,6 +1627,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('cfg-mirror').checked=!!S.cfg.mirror;
   document.getElementById('cfg-autosal').checked=S.cfg.autoSal!==false;
   document.getElementById('btnCfg').onclick=()=>{
+    if(!requireEdit())return;
     S.cfg.si.I=pv(document.getElementById('cfg-si').value);
     S.cfg.si.P=pv(document.getElementById('cfg-sp').value);
     S.cfg.mirror=document.getElementById('cfg-mirror').checked;
@@ -1611,6 +1635,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     save();alert('Configurações salvas.');
   };
   document.getElementById('btnReset').onclick=()=>{
+    if(!requireEdit())return;
     if(confirm('Apagar TODOS os dados? Exporte um backup antes!')&&confirm('Tem certeza? Esta ação não pode ser desfeita.')){
       const ids=[...S.tx.map(x=>x.id),...(S.pend||[]).map(x=>x.id),...(S.comp||[]).map(x=>x.id)];
       S={cfg:S.cfg,tx:[],comp:[],pend:[],alias:{},del:[...(S.del||[]),...ids],saved:null};
