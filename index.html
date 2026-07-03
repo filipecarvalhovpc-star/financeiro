@@ -470,6 +470,7 @@ function parseLine(line){
   if(pm){pendRef=pm[1].trim();txt=txt.slice(0,pm.index);}
   // data
   let d=new Date();let dstr=null;
+  if(/\banteontem\b/i.test(txt)){d.setDate(d.getDate()-2);txt=txt.replace(/\banteontem\b/i,'');}
   if(/\bontem\b/i.test(txt)){d.setDate(d.getDate()-1);txt=txt.replace(/\bontem\b/i,'');}
   if(/\bhoje\b/i.test(txt)){txt=txt.replace(/\bhoje\b/i,'');}
   const dm=txt.match(/\b(\d{1,2})[\/\.\-](\d{1,2})(?:[\/\.\-](\d{2,4}))?(?!\d)/);
@@ -481,6 +482,7 @@ function parseLine(line){
     const dn=txt.match(/\b(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zçâ-ú]*\b/i);
     if(dn){dstr=d.getFullYear()+'-'+String(MABR[dn[2].toLowerCase()]).padStart(2,'0')+'-'+String(+dn[1]).padStart(2,'0');txt=txt.replace(dn[0],'');}
   }
+  if(!dstr){const dd=txt.match(/\bdia\s+(\d{1,2})\b/i);if(dd&&+dd[1]>=1&&+dd[1]<=31){dstr=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(+dd[1]).padStart(2,'0');txt=txt.replace(dd[0],'');}}
   if(!dstr)dstr=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   // valor: último número da linha
   const nums=[...txt.matchAll(/-?\d+(?:\.\d{3})+(?:,\d{1,2})?|-?\d+(?:[.,]\d{1,2})?/g)];
@@ -489,7 +491,7 @@ function parseLine(line){
   // categoria
   let a='P',t='S',c='Outros',sc='';
   for(const[re,ra,rt,rc,rs]of RULES){if(re.test(line)){a=ra;t=rt;c=rc;sc=rs;break;}}
-  if(/receb|entrada/i.test(line)&&t==='S'){t='E';c=(area||a)==='I'?'Entradas Especiais':'Ofertas Especiais';sc='';}
+  if(/\b(recebi|recebido|receber|recebemos|entrou|entrada|ca[ií]u na conta|dep[óo]sito|depositou|doaram|doou|ofertaram|me deram|me deu|ganhei|ganhou)\b/i.test(line)&&t==='S'){t='E';c=(area||a)==='I'?'Entradas Especiais':'Ofertas Especiais';sc='';}
   if(area){if(area!==a){a=area;
     if(!CATS[a][t][c]){c=t==='E'?(a==='I'?'Entradas Especiais':'Ofertas Especiais'):(a==='I'?'Gastos Igreja':'Outros');sc='';}
   }}
@@ -503,6 +505,8 @@ function parseLine(line){
   let n=txt.replace(/\bR\$\s*/gi,'').replace(/\s{2,}/g,' ').replace(/^[\s\-–,.:]+|[\s\-–,.:]+$/g,'').trim();
   // a palavra da categoria não faz parte do nome ("Dízimo Carlice Bastos" → "Carlice Bastos")
   n=n.replace(/^(entrada pessoal externa|d[ií]zimos?|repasse|benef[ií]cios?|caridade|doa[çc][ãa]o|ofertas?)\s+(?:de\s+|da\s+|do\s+)?/i,'').trim();
+  n=n.replace(/\b(reais|real|conto|contos|pila|pilas|pau|paus)\b/gi,' ').replace(/\s{2,}/g,' ').trim();
+  n=n.replace(/^((?:de|do|da|no|na|em|com|pra|para|pro|recebi|recebido|paguei|pagar|gastei|comprei|comprar|ganhei|ganhou)\s+)+/i,'').replace(/\s+(?:de|do|da|no|na|em|com|pra|para|pro)$/i,'').trim();
   if(n)n=n.charAt(0).toUpperCase()+n.slice(1);
   if(!n)n=c;
   return {d:dstr,a,t,c,s:sc,n,v:val,pendRef};
