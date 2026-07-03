@@ -368,6 +368,26 @@ function responder(e){
     <div id="aliasList"></div>
   </div>
   <div class="card">
+    <h2>🗑️ Lixeira <span class="hint">(últimos 30 dias)</span></h2>
+    <div id="trashList"></div>
+  </div>
+  <div class="card">
+    <h2>🏷️ Categorias personalizadas</h2>
+    <p class="hint">Crie novas categorias e subcategorias (além das que já existem). As padrão continuam sempre disponíveis.</p>
+    <div class="row">
+      <select id="cc-area"><option value="I">Igreja</option><option value="P">Pessoal</option></select>
+      <select id="cc-tipo"><option value="S">Saída</option><option value="E">Entrada</option></select>
+      <input type="text" id="cc-cat" placeholder="Nova categoria" style="flex:1;min-width:150px">
+      <button class="btn" id="btnCcCat">Adicionar categoria</button>
+    </div>
+    <div class="row">
+      <select id="cc-catsel"></select>
+      <input type="text" id="cc-sub" placeholder="Nova subcategoria" style="flex:1;min-width:150px">
+      <button class="btn" id="btnCcSub">Adicionar subcategoria</button>
+    </div>
+    <div id="ccList"></div>
+  </div>
+  <div class="card">
     <h2>Zona de risco</h2>
     <div class="row"><button class="btn warn" id="btnReset">Apagar tudo e recomeçar</button></div>
   </div>
@@ -408,6 +428,42 @@ const CATS={
  P:{E:{'Repasse Igreja':[],'Ofertas Especiais':[],'Salários':[],'Benefícios':[],'Ajuste de Saldo':[]},
     S:{'Essenciais':['Mercado','Padaria','Fruteira','Farmácia'],'Moradia':[],'Transporte':[],'Lanches':[],'Outros':[],'Caridade':[]}}};
 const AREAS={I:'Igreja',P:'Pessoal'},TIPOS={E:'Entrada',S:'Saída'};
+/*==== CATEGORIAS PERSONALIZADAS (aditivas — mutam o CATS, não removem padrões) ====*/
+const DEFAULT_CATS=JSON.parse(JSON.stringify(CATS));
+try{mergeCatsExtra();}catch(e){}
+function catsExtraGuard(){S.cfg.catsExtra=S.cfg.catsExtra||{};['I','P'].forEach(a=>{S.cfg.catsExtra[a]=S.cfg.catsExtra[a]||{};['E','S'].forEach(t=>{S.cfg.catsExtra[a][t]=S.cfg.catsExtra[a][t]||{};});});}
+function mergeCatsExtra(){
+  if(!S.cfg||!S.cfg.catsExtra)return;
+  ['I','P'].forEach(a=>['E','S'].forEach(t=>{
+    const src=(S.cfg.catsExtra[a]&&S.cfg.catsExtra[a][t])||{};
+    Object.keys(src).forEach(c=>{
+      if(!CATS[a][t][c])CATS[a][t][c]=[];
+      (src[c]||[]).forEach(s=>{if(s&&!CATS[a][t][c].includes(s))CATS[a][t][c].push(s);});
+    });
+  }));
+}
+function addCategoria(a,t,nome){
+  nome=(nome||'').trim();if(nome.length<2)return false;
+  catsExtraGuard();if(CATS[a][t][nome])return false;
+  S.cfg.catsExtra[a][t][nome]=[];CATS[a][t][nome]=[];save();return true;
+}
+function addSubcat(a,t,cat,sub){
+  sub=(sub||'').trim();if(sub.length<2||!cat||!CATS[a][t][cat])return false;
+  catsExtraGuard();S.cfg.catsExtra[a][t][cat]=S.cfg.catsExtra[a][t][cat]||[];
+  if(!CATS[a][t][cat].includes(sub))CATS[a][t][cat].push(sub);
+  if(!S.cfg.catsExtra[a][t][cat].includes(sub))S.cfg.catsExtra[a][t][cat].push(sub);
+  save();return true;
+}
+function renderCatMgr(){
+  const sel=document.getElementById('cc-catsel'),list=document.getElementById('ccList');if(!sel||!list)return;
+  const a=document.getElementById('cc-area').value,t=document.getElementById('cc-tipo').value;
+  sel.innerHTML=Object.keys(CATS[a][t]).map(c=>`<option>${esc(c)}</option>`).join('');
+  list.innerHTML='<p class="hint" style="margin-top:8px">'+AREAS[a]+' · '+(t==='E'?'Entradas':'Saídas')+':</p>'+
+    Object.keys(CATS[a][t]).map(c=>{
+      const nova=!(DEFAULT_CATS[a][t]&&DEFAULT_CATS[a][t][c]);const subs=(CATS[a][t][c]||[]);
+      return `<div class="grpsub" style="text-transform:none;font-weight:600"><span>${esc(c)}${nova?' <span class="badge I">nova</span>':''}</span><span class="hint">${subs.length?subs.map(esc).join(', '):'—'}</span></div>`;
+    }).join('');
+}
 const MESES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
 /*==== SISTEMA ZERADO — inicia em julho/2026. Saldo de junho entra como saldo inicial (Configurações). ====*/
@@ -649,9 +705,36 @@ function delTx(id){
   if(!requireEdit())return;
   const tx=S.tx.find(x=>x.id===id);if(!tx)return;
   if(!confirm('Excluir "'+tx.n+'" ('+fmt(tx.v)+')?'))return;
-  S.del=S.del||[];S.del.push(id);
-  S.tx.filter(x=>x.lk===id).forEach(x=>S.del.push(x.id));
+  S.del=S.del||[];S.trash=S.trash||[];
+  const grp=uid(),stamp=Date.now();
+  const removed=S.tx.filter(x=>x.id===id||x.lk===id);
+  removed.forEach(x=>{S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:grp,_main:x.id===id}));});
   S.tx=S.tx.filter(x=>x.id!==id&&x.lk!==id);save();
+}
+/*==== LIXEIRA (30 dias) — restaura com IDs novos p/ não conflitar com a nuvem ====*/
+function purgeTrash(){S.trash=(S.trash||[]).filter(x=>Date.now()-(x._del||0)<30*864e5);}
+function restoreTrash(grp){
+  if(!requireEdit())return;
+  S.trash=S.trash||[];
+  const items=S.trash.filter(x=>x._grp===grp);if(!items.length)return;
+  const main=items.find(x=>x._main)||items[0];const newMain=uid();
+  items.forEach(x=>{const o=Object.assign({},x);delete o._del;delete o._grp;delete o._main;
+    o.id=(x.id===main.id)?newMain:uid();
+    if(o.lk===main.id)o.lk=newMain;
+    S.tx.push(o);});
+  S.trash=S.trash.filter(x=>x._grp!==grp);save();toast('↩️ Lançamento restaurado');
+}
+function renderTrash(){
+  const el=document.getElementById('trashList');if(!el)return;
+  purgeTrash();
+  const grupos={};(S.trash||[]).forEach(x=>{(grupos[x._grp]=grupos[x._grp]||[]).push(x);});
+  const keys=Object.keys(grupos);
+  if(!keys.length){el.innerHTML='<p class="hint">Vazia. Lançamentos excluídos ficam aqui por 30 dias.</p>';return;}
+  el.innerHTML='<div style="overflow-x:auto"><table><tr><th>Excluído</th><th>Descrição</th><th class="num">Valor</th><th></th></tr>'+
+   keys.sort((a,b)=>grupos[b][0]._del-grupos[a][0]._del).map(g=>{
+     const it=grupos[g].find(x=>x._main)||grupos[g][0];const extra=grupos[g].length>1?' (+'+(grupos[g].length-1)+' vinculado(s))':'';
+     return `<tr><td>${new Date(it._del).toLocaleDateString('pt-BR')}</td><td>${esc(it.n)}${extra} <span class="hint">${esc(it.c)}</span></td><td class="num ${it.t==='E'?'pos':'neg'}">${fmt(it.v)}</td><td class="no-print"><button class="btn sec" onclick="restoreTrash('${g}')">↩️ Restaurar</button></td></tr>`;
+   }).join('')+'</table></div>';
 }
 
 /*==== DASHBOARDS ====*/
@@ -1445,6 +1528,7 @@ function showNow(pg){
   if(pg==='mov')renderMov();
   if(pg==='dashI')renderDash('I');
   if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();}
+  if(pg==='dados'){renderAliases();renderTrash();renderCatMgr();}
 }
 function refresh(){
   const sI=S.cfg.si.I+net(S.tx.filter(x=>x.a==='I')),sP=S.cfg.si.P+net(S.tx.filter(x=>x.a==='P'));
@@ -1528,6 +1612,21 @@ document.addEventListener('DOMContentLoaded',()=>{
     save();['al-nome','al-valor','al-desc'].forEach(i=>g(i).value='');renderAliases();
   };
   renderAliases();
+  // categorias personalizadas + lixeira
+  ['cc-area','cc-tipo'].forEach(id=>document.getElementById(id).onchange=renderCatMgr);
+  document.getElementById('btnCcCat').onclick=()=>{
+    if(!requireEdit())return;
+    const a=document.getElementById('cc-area').value,t=document.getElementById('cc-tipo').value,nome=document.getElementById('cc-cat').value;
+    if(addCategoria(a,t,nome)){document.getElementById('cc-cat').value='';renderCatMgr();toast('✅ Categoria criada');}
+    else alert('Não criei — nome muito curto ou já existe.');
+  };
+  document.getElementById('btnCcSub').onclick=()=>{
+    if(!requireEdit())return;
+    const a=document.getElementById('cc-area').value,t=document.getElementById('cc-tipo').value,cat=document.getElementById('cc-catsel').value,sub=document.getElementById('cc-sub').value;
+    if(addSubcat(a,t,cat,sub)){document.getElementById('cc-sub').value='';renderCatMgr();toast('✅ Subcategoria criada');}
+    else alert('Não criei — escolha a categoria e digite uma subcategoria.');
+  };
+  renderCatMgr();renderTrash();
   // colar imagem (print copiado) em qualquer lugar da tela → fica em espera com miniatura
   document.addEventListener('paste',e=>{
     if(isLocked())return;
