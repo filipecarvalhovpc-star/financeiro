@@ -96,8 +96,22 @@ summary{cursor:pointer;font-weight:700}
 .pb-l{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:4px;font-weight:600}
 .pb-t{background:var(--line);border-radius:8px;height:14px;overflow:hidden}
 .pb-f{height:100%;border-radius:8px}
-.chatcard{padding:0;overflow:visible;display:flex;flex-direction:column}
-.chatfeed{padding:14px;display:flex;flex-direction:column;gap:8px;min-height:160px}
+.chatcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;height:72vh;min-height:360px}
+.chatfeed{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.lcard{align-self:flex-start;max-width:94%;background:var(--card);border:1px solid var(--gold);border-radius:16px;border-bottom-left-radius:4px;box-shadow:var(--shadow);overflow:hidden}
+.lcard.done{border-color:var(--line)}
+.lcard-h{padding:11px 14px;font-weight:800;border-bottom:1px solid var(--line);font-size:14px}
+.lcard.done .lcard-h{color:var(--green);border-bottom:none}
+.lcard-fields{padding:4px 6px}
+.lf{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;font-size:13px;color:var(--muted)}
+.lf:hover{background:var(--bg)}
+.lf b{color:var(--ink);font-size:14px;text-align:right}
+.lf input,.lf select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--gold);border-radius:8px;padding:6px 8px;max-width:190px}
+.lcard-btns{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line)}
+.lcard-btns .btn{flex:1}
+.lcard-btns .btn.sec{flex:none;width:46px}
+.lcard .done-body{padding:12px 14px}
+.msg-status{color:var(--muted);font-style:italic}
 .bubble{max-width:94%;padding:10px 13px;border-radius:16px;font-size:14px;line-height:1.5}
 .bubble.bot{align-self:flex-start;background:var(--bg);border:1px solid var(--line);border-bottom-left-radius:4px}
 .bubble.me{align-self:flex-end;background:var(--green-bg);color:var(--ink);border-bottom-right-radius:4px}
@@ -185,22 +199,8 @@ summary{cursor:pointer;font-weight:700}
 <main>
 
 <section class="page on" id="pg-lancar">
-  <div class="card chatcard">
-    <div class="chatfeed" id="chatFeed">
-      <div class="bubble bot">👋 Escreva um lançamento — pode ser solto. Ex.: <b>dízimo Carlos 150</b>, <b>paguei 65 no mercado ontem</b>. Ou anexe/cole um recibo (botão ＋). A conferência aparece aqui para você ajustar e confirmar.</div>
-      <div id="imgStage" class="bubble me" style="display:none">
-        <img id="imgThumb" alt="">
-        <span class="hint" id="imgCount"></span>
-        <input type="text" id="ocrNote" placeholder="Descreva a imagem (opcional)">
-        <div class="row" style="margin:8px 0 0">
-          <button class="btn" id="btnOcrGo">🔎 Ler imagem</button>
-          <button class="btn sec" id="btnOcrCancel">✕ Remover</button>
-        </div>
-      </div>
-      <div id="preview"></div>
-      <p class="hint" id="ocrMsg" style="text-align:center;margin:6px 0"></p>
-      <span class="hint" id="parseMsg" style="text-align:center;display:block"></span>
-    </div>
+  <div class="chatcard">
+    <div class="chatfeed" id="chatFeed"></div>
     <div class="composer">
       <div class="attach">
         <button class="attbtn" id="attBtn" type="button" title="Anexar">＋</button>
@@ -211,24 +211,9 @@ summary{cursor:pointer;font-weight:700}
           <button type="button" id="btnPaste">📋 Colar print</button>
         </div>
       </div>
-      <textarea id="qin" rows="1" placeholder="Escreva um lançamento…"></textarea>
-      <button class="sendbtn" id="btnParse" type="button" title="Analisar">➤</button>
+      <textarea id="qin" rows="1" placeholder="Escreva um lançamento ou uma pergunta…"></textarea>
+      <button class="sendbtn" id="btnParse" type="button" title="Enviar">➤</button>
     </div>
-  </div>
-  <div class="card">
-    <details>
-      <summary>Lançamento manual (formulário)</summary>
-      <div class="row">
-        <input type="date" id="m-d">
-        <select id="m-area"><option value="I">Igreja</option><option value="P">Pessoal</option></select>
-        <select id="m-t"><option value="S">Saída</option><option value="E">Entrada</option></select>
-        <select id="m-c"></select>
-        <select id="m-s"></select>
-        <input type="text" id="m-n" placeholder="Descrição / nome" style="flex:1;min-width:150px">
-        <input type="text" id="m-v" placeholder="Valor" style="width:100px">
-        <button class="btn" id="btnManual">Salvar</button>
-      </div>
-    </details>
   </div>
 </section>
 
@@ -1063,6 +1048,99 @@ async function aiParse(text){
     }).filter(p=>p.v>0);
   }catch(e){return null;}
 }
+/*==== CONVERSA — a aba Lançar é um chat de mensagens vivas ====*/
+let CHAT=[];
+function chatPush(m){m.id=m.id||uid();CHAT.push(m);renderChat();scrollChat();return m;}
+function chatRemove(id){CHAT=CHAT.filter(m=>m.id!==id);renderChat();}
+function scrollChat(){const f=document.getElementById('chatFeed');if(f)f.scrollTop=f.scrollHeight;}
+function chatStatus(id,text){const m=CHAT.find(x=>x.id===id);if(m){m.text=text;const el=document.querySelector('.msg-status[data-sid="'+id+'"]');if(el)el.textContent=text;}}
+const chatWelcome='<div class="bubble bot">👋 Escreva um lançamento — pode ser solto. Ex.: <b>dízimo Carlos 150</b>, <b>paguei 65 no mercado ontem</b>. Anexe/cole um recibo pelo ＋. Você também pode perguntar, ex.: <b>quanto gastei com lanches em maio?</b></div>';
+function chatMsg(m){
+  if(m.type==='user')return `<div class="bubble me">${esc(m.text).replace(/\n/g,'<br>')}</div>`;
+  if(m.type==='img')return `<div class="bubble me"><img src="${m.src}"></div>`;
+  if(m.type==='status')return `<div class="bubble bot msg-status" data-sid="${m.id}">${esc(m.text)}</div>`;
+  if(m.type==='bot')return `<div class="bubble bot">${m.html||esc(m.text)}</div>`;
+  if(m.type==='card')return cardHtml(m);
+  return '';
+}
+function cardHtml(m){
+  const p=m.p;
+  if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Lançamento registrado</div><div class="done-body"><b>${esc(p.n)}</b> · ${fmt(p.v)}<br><span class="hint">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span></div></div>`;
+  const row=(f,ic,lb,val)=>`<div class="lf" data-cardid="${m.id}" data-f="${f}"><span>${ic} ${lb}</span><b>${val}</b></div>`;
+  return `<div class="lcard" data-cardid="${m.id}"><div class="lcard-h">🧾 Lançamento encontrado</div><div class="lcard-fields">`+
+    row('d','📅','Data',dBr(p.d))+row('a','📂','Área',AREAS[p.a])+row('t','⬇','Tipo',TIPOS[p.t])+
+    row('c','📁','Categoria',esc(p.c))+row('s','📌','Sub',esc(p.s||'—'))+row('n','📝','Descrição',esc(p.n))+row('v','💰','Valor',fmt(p.v))+
+    `</div><div class="lcard-btns"><button class="btn" data-act="confirm" data-cardid="${m.id}">✅ Confirmar lançamento</button><button class="btn sec" data-act="cancel" data-cardid="${m.id}" title="Descartar">✕</button></div></div>`;
+}
+function renderChat(){const f=document.getElementById('chatFeed');if(!f)return;f.innerHTML=CHAT.length?CHAT.map(chatMsg).join(''):chatWelcome;}
+function renderCardById(id){const el=document.querySelector('.lcard[data-cardid="'+id+'"]');const m=CHAT.find(x=>x.id===id);if(el&&m)el.outerHTML=cardHtml(m);}
+function editField(lf){
+  const id=lf.dataset.cardid,f=lf.dataset.f,m=CHAT.find(x=>x.id===id);if(!m||m.state)return;const p=m.p;
+  let ed;
+  if(f==='d')ed=`<input type="date" value="${p.d}">`;
+  else if(f==='a')ed=`<select><option value="I"${p.a==='I'?' selected':''}>Igreja</option><option value="P"${p.a==='P'?' selected':''}>Pessoal</option></select>`;
+  else if(f==='t')ed=`<select><option value="E"${p.t==='E'?' selected':''}>Entrada</option><option value="S"${p.t==='S'?' selected':''}>Saída</option></select>`;
+  else if(f==='c')ed=`<select>`+Object.keys(CATS[p.a][p.t]).map(c=>`<option${c===p.c?' selected':''}>${esc(c)}</option>`).join('')+`</select>`;
+  else if(f==='s'){const subs=CATS[p.a][p.t][p.c]||[];ed=`<select><option value=""></option>`+subs.map(s=>`<option${s===p.s?' selected':''}>${esc(s)}</option>`).join('')+`</select>`;}
+  else if(f==='n')ed=`<input type="text" value="${esc(p.n)}">`;
+  else ed=`<input type="text" inputmode="decimal" value="${String(p.v).replace('.',',')}">`;
+  lf.querySelector('b').outerHTML='<b>'+ed+'</b>';
+  const inp=lf.querySelector('input,select');inp.focus();try{if(inp.select)inp.select();}catch(e){}
+  const commit=()=>{
+    const v=inp.value;
+    if(f==='v')p.v=pv(v);
+    else if(f==='a'){p.a=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
+    else if(f==='t'){p.t=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
+    else if(f==='c'){p.c=v;p.s='';}
+    else p[f]=v;
+    renderCardById(id);
+  };
+  inp.addEventListener('change',commit);inp.addEventListener('blur',commit);
+}
+function confirmCard(id){
+  const m=CHAT.find(x=>x.id===id);if(!m||m.state)return;
+  if(!requireEdit())return;
+  const p=m.p;
+  if(!p.v){toast('Informe um valor');return;}
+  if(ehDuplicado(p)&&!confirm('⚠️ Já existe um lançamento igual:\n"'+p.n+'" · '+fmt(p.v)+' · '+p.c+'\n\nLançar assim mesmo?'))return;
+  addTx(p);aprendeAlias(p);
+  if(p.pendRef)abatePendByName(p.pendRef,p.v);
+  else if(p.t==='S'){const pend=findPendByName(p.n,p.a);if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+'?'))pend.pago+=p.v;}
+  save();
+  m.state='done';renderCardById(id);toast('✅ Registrado');
+}
+function cancelCard(id){chatRemove(id);}
+async function chatSend(){
+  const raw=(document.getElementById('qin').value||'').trim();if(!raw)return;
+  document.getElementById('qin').value='';
+  chatPush({type:'user',text:raw});
+  const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Analisando…':'Analisando…'});
+  let items=null;
+  if(S.cfg.ai&&syncCfg()&&navigator.onLine){try{items=await aiParse(raw);}catch(e){}}
+  if(!items||!items.length)items=raw.split('\n').map(parseLine).filter(Boolean);
+  chatRemove(st.id);
+  if(!items||!items.length){chatPush({type:'bot',text:'Não entendi um lançamento aí. Tente algo como "dízimo Carlos 150" ou "mercado 120 hoje".'});return;}
+  items.forEach(p=>chatPush({type:'card',p}));
+}
+async function chatImages(files){
+  const note=(document.getElementById('qin').value||'').trim();document.getElementById('qin').value='';
+  for(const f of files){
+    if(f&&f.type==='application/pdf'){chatPush({type:'bot',text:'📄 Leitura de PDF ainda não é automática — envie um print/imagem do documento.'});continue;}
+    chatPush({type:'img',src:URL.createObjectURL(f)});
+    if(note)chatPush({type:'user',text:note});
+    const st=chatPush({type:'status',text:'🔎 Lendo comprovante…'});
+    let items=null;
+    try{
+      if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
+      const r=await Tesseract.recognize(f,'por',{logger:mm=>{if(mm.status==='recognizing text')chatStatus(st.id,'🔎 Lendo… '+Math.round(mm.progress*100)+'%');}});
+      if(S.cfg.ai&&syncCfg()&&navigator.onLine){chatStatus(st.id,'🤖 Interpretando…');try{items=await aiParse((note?note+'\n':'')+r.data.text);}catch(e){}}
+      if(!items||!items.length)items=smartParse(r.data.text,note);
+    }catch(e){}
+    chatRemove(st.id);
+    if(items&&items.length)items.forEach(p=>chatPush({type:'card',p}));
+    else chatPush({type:'bot',text:'Não consegui ler o comprovante. Tente uma foto mais nítida ou digite o lançamento.'});
+  }
+}
 function smartParse(text,note){
   const lines=text.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(Boolean);
   const noteCtx=note?parseLine(note):null;
@@ -1634,7 +1712,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     for(const it of items){
       if(it.type&&it.type.indexOf('image')===0){
         const f=it.getAsFile();
-        if(f){e.preventDefault();stageImgs([f]);return;}
+        if(f){e.preventDefault();chatImages([f]);return;}
       }
     }
   });
@@ -1643,28 +1721,15 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('themeBtn').onclick=()=>{S.cfg.theme=document.body.dataset.theme=(document.body.dataset.theme==='light'?'dark':'light');save();};
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.pg));
   const fab=document.getElementById('fab');if(fab)fab.onclick=()=>show('lancar');
-  document.getElementById('btnParse').onclick=async()=>{
-    const raw=document.getElementById('qin').value;const msg=document.getElementById('parseMsg');
-    let ai=null;
-    if(S.cfg.ai&&syncCfg()&&navigator.onLine&&raw.trim()){msg.textContent='🤖 Analisando com IA…';ai=await aiParse(raw);}
-    PREV=(ai&&ai.length)?ai:raw.split('\n').map(parseLine).filter(Boolean);
-    msg.textContent=PREV.length?((ai&&ai.length)?'🤖 IA — confira e ajuste antes de confirmar:':'Confira e ajuste antes de confirmar:'):'Nada para analisar.';
-    renderPreview();
-  };
-  // manual
-  document.getElementById('m-d').value=new Date().toISOString().slice(0,10);
-  ['m-area','m-t'].forEach(id=>document.getElementById(id).onchange=fillManualCats);
-  document.getElementById('m-c').onchange=fillManualSubs;
-  fillManualCats();
-  document.getElementById('btnManual').onclick=()=>{
-    if(!requireEdit())return;
-    const p={d:document.getElementById('m-d').value,a:document.getElementById('m-area').value,t:document.getElementById('m-t').value,
-      c:document.getElementById('m-c').value,s:document.getElementById('m-s').value,n:document.getElementById('m-n').value||document.getElementById('m-c').value,
-      v:pv(document.getElementById('m-v').value)};
-    if(!p.v){alert('Informe o valor.');return;}
-    addTx(p);save();document.getElementById('m-n').value='';document.getElementById('m-v').value='';
-    document.getElementById('parseMsg').textContent='✅ Lançamento salvo!';
-  };
+  document.getElementById('btnParse').onclick=chatSend;
+  document.getElementById('qin').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();chatSend();}});
+  document.getElementById('chatFeed').addEventListener('click',e=>{
+    const act=e.target.closest('[data-act]');
+    if(act){act.dataset.act==='confirm'?confirmCard(act.dataset.cardid):cancelCard(act.dataset.cardid);return;}
+    const lf=e.target.closest('.lf');
+    if(lf&&!lf.querySelector('input,select'))editField(lf);
+  });
+  renderChat();
   // filtros movimentos
   ['f-area','f-t','f-m','f-q'].forEach(id=>{const el=document.getElementById(id);el.onchange=renderMov;el.oninput=renderMov;});
   // dashboards
@@ -1678,30 +1743,24 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('attBtn').onclick=e=>{e.stopPropagation();document.getElementById('attMenu').classList.toggle('open');};
   document.addEventListener('click',e=>{if(!(e.target&&e.target.closest&&e.target.closest('.attach')))closeAtt();});
   ['ocrCam','ocrFile'].forEach(id=>document.getElementById(id).onchange=e=>{
-    if(e.target.files.length)stageImgs([...e.target.files]);e.target.value='';closeAtt();});
+    if(e.target.files.length)chatImages([...e.target.files]);e.target.value='';closeAtt();});
   document.getElementById('ocrDoc').onchange=e=>{
     const f=e.target.files[0];e.target.value='';closeAtt();
-    if(!f)return;
-    if(f.type==='application/pdf'){ocrStatus('📄 Leitura de PDF ainda não é automática — por ora, envie um print/imagem do documento.');return;}
-    stageImgs([f]);
+    if(f)chatImages([f]);
   };
-  document.getElementById('btnOcrGo').onclick=()=>{if(PENDIMG){const fs=PENDIMG;clearStage();ocrRun(fs);}};
   // Colar print copiado (iPhone: Compartilhar → Copiar → aqui): lê a imagem da área de transferência
   document.getElementById('btnPaste').onclick=async()=>{
     closeAtt();
     try{
-      if(!navigator.clipboard||!navigator.clipboard.read){ocrStatus('Seu navegador não permite colar por botão. Toque e segure no campo de texto e escolha "Colar".');return;}
+      if(!navigator.clipboard||!navigator.clipboard.read){chatPush({type:'bot',text:'Seu navegador não permite colar por botão. Toque e segure no campo e escolha "Colar".'});return;}
       const items=await navigator.clipboard.read();
       for(const it of items){
         const type=(it.types||[]).find(t=>t.indexOf('image/')===0);
-        if(type){const blob=await it.getType(type);stageImgs([new File([blob],'print.png',{type})]);return;}
+        if(type){const blob=await it.getType(type);chatImages([new File([blob],'print.png',{type})]);return;}
       }
-      ocrStatus('Não achei imagem copiada. Tire o print, toque em Compartilhar → Copiar e volte aqui.');
-    }catch(e){ocrStatus('Não consegui colar automaticamente. Toque e segure no campo de texto e escolha "Colar".');}
+      chatPush({type:'bot',text:'Não achei imagem copiada. Tire o print, toque em Compartilhar → Copiar e volte aqui.'});
+    }catch(e){chatPush({type:'bot',text:'Não consegui colar automaticamente. Toque e segure no campo e escolha "Colar".'});}
   };
-  document.getElementById('btnOcrCancel').onclick=clearStage;
-  document.getElementById('ocrNote').addEventListener('keydown',e=>{
-    if(e.key==='Enter'&&PENDIMG){e.preventDefault();const fs=PENDIMG;clearStage();ocrRun(fs);}});
   // gesto de voltar/avançar (arrastar para os lados)
   let tX=null,tY=null;
   document.addEventListener('touchstart',e=>{if(e.touches.length===1){tX=e.touches[0].clientX;tY=e.touches[0].clientY;}},{passive:true});
