@@ -73,6 +73,8 @@ button.btn.sec{background:transparent;color:var(--ink);border:1px solid var(--li
 button.btn.warn{background:var(--red);color:#fff;box-shadow:none}
 button.icon{background:transparent;border:none;cursor:pointer;font-size:15px;padding:3px 6px;color:var(--muted);border-radius:8px;transition:background .15s,color .15s}
 button.icon:hover{background:var(--bg);color:var(--ink)}
+button.icon:disabled{opacity:.32;cursor:default}
+#toast{position:fixed;left:0;right:0;bottom:26px;margin:0 auto;width:max-content;max-width:86%;padding:10px 18px;border-radius:999px;background:var(--ink);color:var(--card);font-size:14px;font-weight:700;z-index:160;opacity:0;transform:translateY(10px);transition:opacity .2s,transform .2s;pointer-events:none;box-shadow:var(--shadow)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
 .hint{font-size:13px;color:var(--muted);line-height:1.5}
 .badge{font-size:11px;padding:3px 9px;border-radius:999px;font-weight:700;display:inline-block}
@@ -131,6 +133,7 @@ summary{cursor:pointer;font-weight:700}
 </head>
 <body data-theme="dark">
 <div id="ptr">↓ Puxe para atualizar</div>
+<div id="toast"></div>
 <div id="lock">
   <div class="lock-card">
     <div style="width:76px;height:76px;margin:0 auto 12px;border-radius:22px;background:linear-gradient(135deg,#0f2e23,#1e4d3a);border:1px solid #2b5a45;display:flex;align-items:center;justify-content:center"><span style="font-family:Georgia,'Times New Roman',serif;font-size:42px;font-weight:700;color:#d4af37">Á</span></div>
@@ -150,6 +153,7 @@ summary{cursor:pointer;font-weight:700}
   <span id="sessChip" class="hint no-print" title="Tempo até o bloqueio automático"></span>
   <button class="icon no-print" id="dadosBtn" title="Configurações e dados">⚙️</button>
   <button class="icon no-print" id="refreshBtn" title="Atualizar agora (buscar da nuvem)">🔄</button>
+  <button class="icon no-print" id="undoBtn" title="Desfazer (Ctrl+Z)" disabled>↶</button>
   <button class="icon no-print" id="lockBtn" title="Bloquear agora">🔒</button>
   <button class="icon no-print" id="themeBtn" title="Tema claro/escuro">🌓</button>
 </header>
@@ -384,11 +388,32 @@ const MESES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agos
 /*==== ESTADO ====*/
 const KEY='finfam_v2';
 let S=load();
+let HIST=[]; /* pilha para Desfazer (Ctrl+Z) */
 function load(){
   try{const raw=localStorage.getItem(KEY);if(raw)return JSON.parse(raw);}catch(e){}
   return {cfg:{si:{I:477.08,P:0},mirror:true,theme:'light'},tx:[],comp:[],saved:null};
 }
-function save(){S.saved=new Date().toISOString();try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){alert('Não foi possível salvar no navegador: '+e.message);}schedulePush();refresh();}
+function save(fromUndo){
+  if(!fromUndo){const before=localStorage.getItem(KEY);if(before){HIST.push(before);if(HIST.length>40)HIST.shift();}}
+  S.saved=new Date().toISOString();
+  try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){alert('Não foi possível salvar no navegador: '+e.message);}
+  schedulePush();refresh();if(typeof updateUndoBtn==='function')updateUndoBtn();
+}
+function undo(){
+  if(!HIST.length){toast('Nada para desfazer');return;}
+  const prev=HIST.pop();
+  try{S=JSON.parse(prev);}catch(e){toast('Não consegui desfazer');return;}
+  try{localStorage.setItem(KEY,prev);}catch(e){}
+  schedulePush();refresh();if(typeof updateUndoBtn==='function')updateUndoBtn();
+  toast('↶ Ação desfeita');
+}
+function updateUndoBtn(){const b=document.getElementById('undoBtn');if(b)b.disabled=!HIST.length;}
+let TOAST_T=null;
+function toast(msg){
+  let el=document.getElementById('toast');if(!el)return;
+  el.textContent=msg;el.style.opacity='1';el.style.transform='translateY(0)';
+  clearTimeout(TOAST_T);TOAST_T=setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(10px)';},1600);
+}
 
 /*==== UTILS ====*/
 const fmt=v=>(v<0?'-':'')+'R$ '+Math.abs(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -504,10 +529,16 @@ function renderPreview(){
   <button class="btn sec" onclick="PREV=[];renderPreview()">Cancelar</button></div>`;
 }
 function fixCat(i){const p=PREV[i];if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
+/* aviso de duplicado: mesmo tipo/área/categoria/valor/nome, data em ±2 dias */
+function ehDuplicado(p){
+  const nn=aliasNorm(p.n||'');
+  return S.tx.some(x=>x.a===p.a&&x.t===p.t&&x.c===p.c&&Math.abs(x.v-p.v)<0.005&&aliasNorm(x.n||'')===nn&&Math.abs(new Date(x.d)-new Date(p.d))<=2*864e5);
+}
 function confirmPrev(){
   let msgs=[];
   PREV.forEach(p=>{
     if(!p.v){msgs.push('Ignorado (valor zero): '+p.n);return;}
+    if(ehDuplicado(p)&&!confirm('⚠️ Já existe um lançamento igual:\n"'+p.n+'" · '+fmt(p.v)+' · '+p.c+'\n\nLançar assim mesmo?')){msgs.push('Duplicado ignorado: '+p.n);return;}
     addTx(p);
     aprendeAlias(p);
     if(p.pendRef){abatePendByName(p.pendRef,p.v);msgs.push('📌 Abatido em pendência: '+p.pendRef);}
@@ -1392,6 +1423,16 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&syncCfg())cloudPull(true);});
   document.getElementById('refreshBtn').onclick=()=>cloudPull();
   document.getElementById('dadosBtn').onclick=()=>show('dados');
+  document.getElementById('undoBtn').onclick=undo;
+  document.addEventListener('keydown',e=>{
+    if((e.ctrlKey||e.metaKey)&&(e.key==='z'||e.key==='Z')&&!e.shiftKey){
+      const tag=(e.target&&e.target.tagName)||'';
+      if(tag==='INPUT'||tag==='TEXTAREA'||(e.target&&e.target.isContentEditable))return;
+      if(isLocked())return;
+      e.preventDefault();undo();
+    }
+  });
+  updateUndoBtn();
   document.getElementById('lockBtn').onclick=lockNow;
   // pendências e memória de nomes
   S.pend=S.pend||[];
