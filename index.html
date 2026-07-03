@@ -346,6 +346,7 @@ function responder(e){
     <div class="row"><label>Saldo inicial Pessoal: <input type="text" id="cfg-sp" style="width:110px"></label></div>
     <div class="row"><label><input type="checkbox" id="cfg-mirror"> Ao lançar salário/ajuda em "Custo Pastoral" na Igreja, criar automaticamente a entrada "Repasse Igreja" no Pessoal</label></div>
     <div class="row"><label><input type="checkbox" id="cfg-autosal"> Gastos pessoais geram automaticamente o salário pago pela igreja (Pr. Filipe 1.700 → Pra. Anna 1.700 → Missionários 3×300 → Bônus extra se o caixa pessoal ficar negativo)</label></div>
+    <div class="row"><label><input type="checkbox" id="cfg-ai"> 🤖 Modo IA quando online — usa a inteligência do Google (Gemini) para entender textos e fotos difíceis. Requer configurar a chave no seu Apps Script (te passo o passo a passo). Offline, usa as regras normais.</label></div>
     <div class="row"><button class="btn" id="btnCfg">Salvar configurações</button> <button class="btn sec" id="btnPinSys">🔑 Alterar senha de abertura</button> <button class="btn sec" id="btnPin">🔒 Alterar senha da área pessoal</button> <button class="btn sec" id="btnBio">👤 Face ID neste aparelho</button></div>
     <p class="hint">As senhas protegem contra olhares casuais (abertura do sistema, painel Pessoal, relatórios pessoais, movimentos e exportações). Os dados continuam gravados no aparelho — não é criptografia.</p>
   </div>
@@ -952,12 +953,32 @@ async function ocrRun(files){
     for(const f of files){
       ocrStatus('🔍 Lendo a imagem…');
       const r=await Tesseract.recognize(f,'por',{logger:m=>{if(m.status==='recognizing text')ocrStatus('🔍 Lendo… '+Math.round(m.progress*100)+'%');}});
-      PREV.push(...smartParse(r.data.text,note));
+      let ai=null;
+      if(S.cfg.ai&&syncCfg()&&navigator.onLine){ocrStatus('🤖 Interpretando com IA…');ai=await aiParse((note?note+'\n':'')+r.data.text);}
+      if(ai&&ai.length)PREV.push(...ai);else PREV.push(...smartParse(r.data.text,note));
     }
     renderPreview();
     if(noteEl)noteEl.value='';
     ocrStatus(PREV.length>1?'✅ Encontrei '+PREV.length+' possíveis lançamentos. Complete o que faltar, remova o que não for (✕) e confirme.':'✅ Imagem lida! Confira, ajuste se precisar e confirme.');
   }catch(e){ocrStatus('⚠️ '+e.message);}
+}
+/* Modo IA (opcional): envia o texto ao Apps Script, que consulta o Gemini,
+   e devolve lançamentos já estruturados. As categorias são validadas contra CATS. */
+async function aiParse(text){
+  const c=syncCfg();if(!c||!text||!String(text).trim())return null;
+  try{
+    const r=await fetch(c.url+'?k='+encodeURIComponent(c.key||'')+'&action=ai',{method:'POST',body:String(text)});
+    const j=await r.json();
+    if(!j||j.ok!==true||!Array.isArray(j.items)||!j.items.length)return null;
+    return j.items.map(it=>{
+      let a=it.a==='I'?'I':'P',t=it.t==='E'?'E':'S',cc=it.c,sc=it.s||'';
+      if(!CATS[a]||!CATS[a][t]||!CATS[a][t][cc]){cc=t==='E'?(a==='I'?'Entradas Especiais':'Ofertas Especiais'):(a==='I'?'Gastos Igreja':'Outros');sc='';}
+      else if(sc&&!(CATS[a][t][cc]||[]).includes(sc))sc='';
+      const d=/^\d{4}-\d{2}-\d{2}$/.test(it.d)?it.d:new Date().toISOString().slice(0,10);
+      const n=((it.n||'')+'').trim()||cc;
+      return {d,a,t,c:cc,s:sc,n,v:pv(it.v)||0,pendRef:null};
+    }).filter(p=>p.v>0);
+  }catch(e){return null;}
 }
 function smartParse(text,note){
   const lines=text.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(Boolean);
@@ -1523,10 +1544,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('themeBtn').onclick=()=>{S.cfg.theme=document.body.dataset.theme=(document.body.dataset.theme==='light'?'dark':'light');save();};
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.pg));
   const fab=document.getElementById('fab');if(fab)fab.onclick=()=>show('lancar');
-  document.getElementById('btnParse').onclick=()=>{
-    const lines=document.getElementById('qin').value.split('\n');
-    PREV=lines.map(parseLine).filter(Boolean);
-    document.getElementById('parseMsg').textContent=PREV.length?'Confira e ajuste antes de confirmar:':'Nada para analisar.';
+  document.getElementById('btnParse').onclick=async()=>{
+    const raw=document.getElementById('qin').value;const msg=document.getElementById('parseMsg');
+    let ai=null;
+    if(S.cfg.ai&&syncCfg()&&navigator.onLine&&raw.trim()){msg.textContent='🤖 Analisando com IA…';ai=await aiParse(raw);}
+    PREV=(ai&&ai.length)?ai:raw.split('\n').map(parseLine).filter(Boolean);
+    msg.textContent=PREV.length?((ai&&ai.length)?'🤖 IA — confira e ajuste antes de confirmar:':'Confira e ajuste antes de confirmar:'):'Nada para analisar.';
     renderPreview();
   };
   // manual
@@ -1665,12 +1688,14 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('cfg-sp').value=String(S.cfg.si.P).replace('.',',');
   document.getElementById('cfg-mirror').checked=!!S.cfg.mirror;
   document.getElementById('cfg-autosal').checked=S.cfg.autoSal!==false;
+  document.getElementById('cfg-ai').checked=!!S.cfg.ai;
   document.getElementById('btnCfg').onclick=()=>{
     if(!requireEdit())return;
     S.cfg.si.I=pv(document.getElementById('cfg-si').value);
     S.cfg.si.P=pv(document.getElementById('cfg-sp').value);
     S.cfg.mirror=document.getElementById('cfg-mirror').checked;
     S.cfg.autoSal=document.getElementById('cfg-autosal').checked;
+    S.cfg.ai=document.getElementById('cfg-ai').checked;
     save();alert('Configurações salvas.');
   };
   document.getElementById('btnReset').onclick=()=>{
