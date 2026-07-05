@@ -423,10 +423,10 @@ function responder(e){
 <script>
 /*==== CATEGORIAS ====*/
 const CATS={
- I:{E:{'Dízimos':[],'Cultos':[],'Cantinas':[],'Entradas Especiais':[],'Feijoada':[],'Ajuste de Saldo':[]},
-    S:{'Gastos Igreja':[],'Custo Pastoral':['Pró-labore','Missionários'],'Caridade':[],'Outros Gastos':[]}},
- P:{E:{'Repasse Igreja':[],'Ofertas Especiais':[],'Salários':[],'Benefícios':[],'Ajuste de Saldo':[]},
-    S:{'Essenciais':['Mercado','Padaria','Fruteira','Farmácia'],'Moradia':[],'Transporte':[],'Lanches':[],'Outros':[],'Caridade':[]}}};
+ I:{E:{'Dízimos':[],'Cultos':[],'Cantinas':[],'Entradas Especiais':[],'Feijoada':[],'Reserva':[],'Ajuste de Saldo':[]},
+    S:{'Gastos Igreja':[],'Custo Pastoral':['Pró-labore','Missionários'],'Caridade':[],'Reserva':[],'Outros Gastos':[]}},
+ P:{E:{'Repasse Igreja':[],'Ofertas Especiais':[],'Salários':[],'Benefícios':[],'Reserva':[],'Ajuste de Saldo':[]},
+    S:{'Essenciais':['Mercado','Padaria','Fruteira','Farmácia'],'Moradia':[],'Transporte':[],'Lanches':[],'Reserva':[],'Outros':[],'Caridade':[]}}};
 const AREAS={I:'Igreja',P:'Pessoal'},TIPOS={E:'Entrada',S:'Saída'};
 /*==== CATEGORIAS PERSONALIZADAS (aditivas — mutam o CATS, não removem padrões) ====*/
 const DEFAULT_CATS=JSON.parse(JSON.stringify(CATS));
@@ -521,6 +521,14 @@ function siD(a){return (S.cfg.siD&&S.cfg.siD[a])||0;}
 function saldoConta(a){return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&(x.pay||'C')==='C'));}
 function saldoDinheiro(a){return siD(a)+net(S.tx.filter(x=>x.a===a&&x.pay==='D'));}
 function saldoTotal(a){return saldoConta(a)+saldoDinheiro(a);}
+/* Reservas (Etapa 2): livro-razão S.resv[] {id,r:'I'|'P',dir:'in'|'out',v,pay,d,n,grp}.
+   Cada movimento de reserva também gera um lançamento na categoria 'Reserva' do caixa da área. */
+const RESV_NAME={I:'Reserva da Igreja',P:'Reserva Pessoal'};
+function resvGuard(){S.resv=S.resv||[];}
+function reservaSaldo(r,pay){resvGuard();return S.resv.filter(x=>x.r===r&&x.pay===pay).reduce((s,x)=>s+(x.dir==='in'?x.v:-x.v),0);}
+function reservaDinheiro(r){return reservaSaldo(r,'D');}
+function reservaConta(r){return reservaSaldo(r,'C');}
+function reservaTotal(r){return reservaConta(r)+reservaDinheiro(r);}
 function ultimoMes(a){const ms=S.tx.filter(x=>!a||x.a===a).map(x=>mk(x.d)).sort();return ms.length?ms[ms.length-1]:new Date().toISOString().slice(0,7);}
 
 /*==== PARSER CONVERSACIONAL ====*/
@@ -600,7 +608,50 @@ function parseLine(line){
 }
 /* Suporta pagamento por Dinheiro/Pix e lançamento duplo numa frase:
    "mercado 50 em dinheiro e 100 no pix" -> 2 lançamentos. Sem método = conta (pix). */
+/* Reservas: detecta alvo (igreja/pessoal), direção (depósito/retirada) e valor. */
+function reservaAlvo(line){
+  if(/reserva\s+(?:da\s+|do\s+)?igreja|reserva\s+ig\b/i.test(line))return 'I';
+  if(/reserva\s+(?:da\s+|do\s+|minha\s+)?pessoal|minha\s+reserva/i.test(line))return 'P';
+  if(/reserva/i.test(line))return 'P';
+  return null;
+}
+function reservaDir(line){
+  if(/\b(da|do|de)\s+reserva/i.test(line))return 'from';
+  if(/\b(pra|para|na|no|à|a)\s+(a\s+)?reserva/i.test(line))return 'to';
+  if(/reserva/i.test(line))return 'to';
+  return null;
+}
+function valorDaReserva(line){
+  const m=line.match(/(\d+(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:reais?)?,?\s*(?:da|do|de)\s+reserva/i);
+  return m?pv(m[1]):0;
+}
+function parseReserva(line){
+  if(!/reserva/i.test(line))return null;
+  const r=reservaAlvo(line),dir=reservaDir(line);if(!r)return null;
+  const pay=/\b(dinheiro|esp[ée]cie|vivo|m[ãa]os)\b/i.test(line)?'D':'C';
+  if(dir==='from'){
+    const rv=valorDaReserva(line);if(!rv)return null;
+    // remove a cláusula da reserva e tenta ler a despesa que sobrou
+    const exLine=line.replace(/,?\s*\d+(?:\.\d{3})*(?:[.,]\d{1,2})?\s*(?:reais?)?\s*(?:da|do|de)\s+reserva(?:\s+(?:da\s+|do\s+|minha\s+)?(?:igreja|pessoal))?/i,' ').replace(/\s{2,}/g,' ').trim();
+    const ex=parseLine(exLine);
+    if(ex&&ex.v>0){ // retirada cobrindo uma despesa: força a despesa no caixa da reserva
+      ex.a=r;if(!CATS[ex.a][ex.t][ex.c]){ex.t='S';ex.c=r==='I'?'Gastos Igreja':'Outros';ex.s='';}
+      ex.pay=pay;ex.rsv={dir:'wit',r,v:rv};return [ex];
+    }
+    // retirada simples (volta pro caixa)
+    return [{d:(ex&&ex.d)||new Date().toISOString().slice(0,10),a:r,t:'E',c:'Reserva',s:'',n:'Retirada — '+RESV_NAME[r],v:rv,pay,rsvOnly:true,rsv:{dir:'wit',r,v:rv}}];
+  }
+  // depósito
+  const base=parseLine(line);if(!base||!base.v)return null;
+  base.pay=pay;
+  if(base.t==='E'){ // entrou dinheiro novo e foi pra reserva: registra a entrada e move pra reserva
+    base.rsv={dir:'dep',r,v:base.v};return [base];
+  }
+  // apenas separou dinheiro que já existia no caixa
+  return [{d:base.d,a:r,t:'S',c:'Reserva',s:'',n:'Depósito — '+RESV_NAME[r],v:base.v,pay,rsvOnly:true,rsv:{dir:'dep',r,v:base.v}}];
+}
 function parseLineMulti(line){
+  const rsv=parseReserva(line);if(rsv)return rsv;
   const base=parseLine(line);if(!base)return [];
   const re=/(\d+(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:reais?|conto?s?|pila)?\s*(?:em|no|na|de|via|pelo|pela)?\s*(dinheiro|esp[ée]cie|m[ãa]os|vivo|pix|conta|cart[ãa]o|transfer\w*|d[ée]bito|cr[ée]dito|dep[óo]sito|banco)\b/gi;
   const segs=[];let m;
@@ -662,13 +713,26 @@ function confirmPrev(){
   document.getElementById('qin').value='';
 }
 function addTx(p){
+  if(p.rsvOnly){commitResv(p,null);return;}  // movimento puro de reserva (sem lançamento base)
   const tx={id:uid(),d:p.d,a:p.a,t:p.t,c:p.c,s:p.s||'',n:p.n,v:p.v,pay:p.pay||'C'};
   S.tx.push(tx);
   if(S.cfg.mirror&&p.a==='I'&&p.t==='S'&&p.c==='Custo Pastoral'&&!p.au){
     S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,pay:'C',lk:tx.id});
   }
+  if(p.rsv)commitResv(p,tx.id);           // efeito na reserva vinculado a este lançamento
   // gastos pessoais geram o salário pago pela igreja (faixas) — excluídas as entradas
-  if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S')autoSalario(p.v,p.d,tx.id);
+  if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S'&&p.c!=='Reserva')autoSalario(p.v,p.d,tx.id);
+}
+/* Efetiva o movimento de reserva: (1) lançamento na categoria 'Reserva' do caixa da área,
+   (2) entrada no livro-razão S.resv. Vinculado ao lançamento base (baseId) p/ excluir junto. */
+function commitResv(p,baseId){
+  resvGuard();
+  const r=p.rsv.r,v=p.rsv.v,pay=p.pay||'C',dep=p.rsv.dir==='dep';
+  const rtx={id:uid(),d:p.d,a:r,t:dep?'S':'E',c:'Reserva',s:'',n:(dep?'→ ':'← ')+RESV_NAME[r],v,pay};
+  if(baseId)rtx.lk=baseId;
+  S.tx.push(rtx);
+  const grp=baseId||rtx.id;
+  S.resv.push({id:uid(),r,dir:dep?'in':'out',v,pay,d:p.d,n:p.rsvOnly?(p.n||''):(p.n||p.c||''),grp});
 }
 /* Salário automático: cada gasto pessoal gera (1) despesa da igreja em Custo Pastoral
    e (2) entrada pessoal como Repasse, seguindo as faixas mensais:
@@ -729,6 +793,9 @@ function delTx(id){
   const grp=uid(),stamp=Date.now();
   const removed=S.tx.filter(x=>x.id===id||x.lk===id);
   removed.forEach(x=>{S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:grp,_main:x.id===id}));});
+  const remIds=new Set(removed.map(x=>x.id));
+  resvGuard();
+  S.resv=S.resv.filter(rv=>{if(remIds.has(rv.grp)){S.del.push(rv.id);S.trash.push(Object.assign({},rv,{_del:stamp,_grp:grp,_resv:1}));return false;}return true;});
   S.tx=S.tx.filter(x=>x.id!==id&&x.lk!==id);save();
 }
 /*==== LIXEIRA (30 dias) — restaura com IDs novos p/ não conflitar com a nuvem ====*/
@@ -738,10 +805,12 @@ function restoreTrash(grp){
   S.trash=S.trash||[];
   const items=S.trash.filter(x=>x._grp===grp);if(!items.length)return;
   const main=items.find(x=>x._main)||items[0];const newMain=uid();
-  items.forEach(x=>{const o=Object.assign({},x);delete o._del;delete o._grp;delete o._main;
+  resvGuard();
+  items.forEach(x=>{const o=Object.assign({},x);const isResv=o._resv;delete o._del;delete o._grp;delete o._main;delete o._resv;
     o.id=(x.id===main.id)?newMain:uid();
     if(o.lk===main.id)o.lk=newMain;
-    S.tx.push(o);});
+    if(isResv){o.grp=(x.grp===main.id)?newMain:o.grp;S.resv.push(o);}
+    else S.tx.push(o);});
   S.trash=S.trash.filter(x=>x._grp!==grp);save();toast('↩️ Lançamento restaurado');
 }
 function renderTrash(){
@@ -799,6 +868,44 @@ function renderGrouped(a,m){
     <div><h3 style="color:var(--red);border-bottom:2px solid var(--red);padding-bottom:3px">SAÍDAS — ${fmt(sum(Sd))}</h3>${grupoBloco(Sd,a,'S')}</div>
   </div>`;
 }
+/* Reservas — bloco de saldos + extrato expansível (aba Pessoal). */
+function reservaExtrato(r){
+  resvGuard();
+  const list=S.resv.filter(x=>x.r===r).slice().sort((a,b)=>String(b.d).localeCompare(String(a.d)));
+  if(!list.length)return '<p class="hint" style="margin:6px 0">Sem movimentos ainda.</p>';
+  return `<table>${list.map(x=>`<tr><td>${dBr(x.d)}</td><td>${x.dir==='in'?'⬆️ Depósito':'⬇️ Retirada'} ${x.n?'<span class="hint">'+esc(x.n)+'</span>':''} <span class="hint">${x.pay==='D'?'💵':'🏦'}</span></td><td class="num ${x.dir==='in'?'pos':'neg'}">${fmt(x.v)}</td></tr>`).join('')}</table>`;
+}
+function reservaCard(r){
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">🏦 ${RESV_NAME[r]}</h2><b style="font-size:19px;color:${reservaTotal(r)>=0?'var(--green)':'var(--red)'}">${fmt(reservaTotal(r))}</b></div>
+    <div class="grid c2" style="margin-top:8px">
+     <div class="kpi ${reservaDinheiro(r)>=0?'g':'r'}"><div class="lbl">💵 Dinheiro</div><div class="val">${fmt(reservaDinheiro(r))}</div></div>
+     <div class="kpi ${reservaConta(r)>=0?'b':'r'}"><div class="lbl">🏦 Conta / Pix</div><div class="val">${fmt(reservaConta(r))}</div></div>
+    </div>
+    <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Ver extrato</summary>${reservaExtrato(r)}</details>
+  </div>`;
+}
+/* Ofertas por culto (aba Igreja): cada culto (data) com valor em dinheiro + conta + total. */
+function renderOfertasCultos(m){
+  const list=S.tx.filter(x=>x.a==='I'&&x.t==='E'&&x.c==='Cultos'&&mk(x.d)===m);
+  if(!list.length)return '';
+  const byD={};list.forEach(x=>{(byD[x.d]=byD[x.d]||[]).push(x);});
+  const datas=Object.keys(byD).sort((a,b)=>b.localeCompare(a));
+  const rows=datas.map(d=>{
+    const it=byD[d];
+    const din=it.filter(x=>x.pay==='D').reduce((s,x)=>s+x.v,0);
+    const con=it.filter(x=>(x.pay||'C')==='C').reduce((s,x)=>s+x.v,0);
+    return `<tr><td>${dBr(d)}</td><td class="num">${fmt(din)}</td><td class="num">${fmt(con)}</td><td class="num"><b>${fmt(din+con)}</b></td></tr>`;
+  }).join('');
+  const tD=list.filter(x=>x.pay==='D').reduce((s,x)=>s+x.v,0),tC=list.filter(x=>(x.pay||'C')==='C').reduce((s,x)=>s+x.v,0);
+  return `<div class="card"><h2>⛪ Ofertas por culto — ${mLabel(m)}</h2>
+   <div style="overflow-x:auto"><table><tr><th>Culto (data)</th><th class="num">💵 Dinheiro</th><th class="num">🏦 Conta/Pix</th><th class="num">Total</th></tr>
+   ${rows}<tr class="total"><td>TOTAL</td><td class="num">${fmt(tD)}</td><td class="num">${fmt(tC)}</td><td class="num">${fmt(tD+tC)}</td></tr></table></div></div>`;
+}
+function renderReservas(){
+  return `<div class="card"><h2>🏦 Reservas</h2><p class="hint">Guarde ou use dinheiro das reservas direto pelo chat. Ex.: <b>guardar 200 na reserva da igreja</b>, <b>tirei 300 da reserva pessoal</b>, <b>conta de luz 500, 200 da reserva da igreja</b>.</p></div>
+   <div class="grid c2">${reservaCard('I')}${reservaCard('P')}</div>`;
+}
 function renderDash(a){
   const m=document.getElementById('m'+a).value||ultimoMes(a);
   document.getElementById('m'+a).value=m;
@@ -812,6 +919,8 @@ function renderDash(a){
      <div class="kpi ${saldoTotal(a)>=0?'g':'r'}"><div class="lbl">Total disponível</div><div class="val">${fmt(saldoTotal(a))}</div></div>
     </div>
    </div>
+   ${a==='P'?renderReservas():''}
+   ${a==='I'?renderOfertasCultos(m):''}
    <div class="grid c4">
     <div class="kpi g"><div class="lbl">Entradas · ${mLabel(m)}</div><div class="val">${fmt(sum(E))}</div></div>
     <div class="kpi r"><div class="lbl">Saídas</div><div class="val">${fmt(sum(Sd))}</div></div>
@@ -1113,11 +1222,23 @@ function chatMsg(m){
 function cardHtml(m){
   const p=m.p;
   const payL=p.pay==='D'?'💵 Dinheiro':'🏦 Pix/Conta';
-  if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Lançamento registrado</div><div class="done-body"><b>${esc(p.n)}</b> · ${fmt(p.v)} · ${payL}<br><span class="hint">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span></div></div>`;
+  const rsvL=p.rsv?(p.rsv.dir==='dep'?'Deposita '+fmt(p.rsv.v)+' na '+RESV_NAME[p.rsv.r]:'Usa '+fmt(p.rsv.v)+' da '+RESV_NAME[p.rsv.r]):'';
+  // ---- Movimento puro de reserva (depósito/retirada sem despesa/renda base) ----
+  if(p.rsvOnly){
+    const tit=p.rsv.dir==='dep'?'Depósito na '+RESV_NAME[p.rsv.r]:'Retirada da '+RESV_NAME[p.rsv.r];
+    if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Reserva atualizada</div><div class="done-body"><b>🏦 ${tit}</b> · ${fmt(p.v)} · ${payL}<br><span class="hint">${dBr(p.d)}</span></div></div>`;
+    const row=(f,ic,lb,val)=>`<div class="lf" data-cardid="${m.id}" data-f="${f}"><span>${ic} ${lb}</span><b>${val}</b></div>`;
+    return `<div class="lcard" data-cardid="${m.id}"><div class="lcard-h">🏦 ${tit}</div><div class="lcard-fields">`+
+      row('d','📅','Data',dBr(p.d))+row('rr','🏦','Reserva',RESV_NAME[p.rsv.r])+row('v','💰','Valor',fmt(p.v))+row('pay','💳','Pagamento',p.pay==='D'?'Dinheiro':'Pix/Conta')+
+      `</div><div class="lcard-btns"><button class="btn" data-act="confirm" data-cardid="${m.id}">✅ Confirmar</button><button class="btn sec" data-act="cancel" data-cardid="${m.id}" title="Descartar">✕</button></div></div>`;
+  }
+  if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Lançamento registrado</div><div class="done-body"><b>${esc(p.n)}</b> · ${fmt(p.v)} · ${payL}<br><span class="hint">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span>${rsvL?'<br><span class="hint">🏦 '+rsvL+'</span>':''}</div></div>`;
   const row=(f,ic,lb,val)=>`<div class="lf" data-cardid="${m.id}" data-f="${f}"><span>${ic} ${lb}</span><b>${val}</b></div>`;
+  const rowRO=(ic,lb,val)=>`<div class="lf" style="opacity:.85"><span>${ic} ${lb}</span><b>${val}</b></div>`;
   return `<div class="lcard" data-cardid="${m.id}"><div class="lcard-h">🧾 Lançamento encontrado</div><div class="lcard-fields">`+
     row('d','📅','Data',dBr(p.d))+row('a','📂','Área',AREAS[p.a])+row('t','⬇','Tipo',TIPOS[p.t])+
     row('c','📁','Categoria',esc(p.c))+row('s','📌','Sub',esc(p.s||'—'))+row('n','📝','Descrição',esc(p.n))+row('v','💰','Valor',fmt(p.v))+row('pay','💳','Pagamento',p.pay==='D'?'Dinheiro':'Pix/Conta')+
+    (rsvL?rowRO('🏦','Reserva',rsvL):'')+
     `</div><div class="lcard-btns"><button class="btn" data-act="confirm" data-cardid="${m.id}">✅ Confirmar lançamento</button><button class="btn sec" data-act="cancel" data-cardid="${m.id}" title="Descartar">✕</button></div></div>`;
 }
 function renderChat(){const f=document.getElementById('chatFeed');if(!f)return;f.innerHTML=CHAT.length?CHAT.map(chatMsg).join(''):chatWelcome;}
@@ -1132,12 +1253,14 @@ function editField(lf){
   else if(f==='s'){const subs=CATS[p.a][p.t][p.c]||[];ed=`<select><option value=""></option>`+subs.map(s=>`<option${s===p.s?' selected':''}>${esc(s)}</option>`).join('')+`</select>`;}
   else if(f==='n')ed=`<input type="text" value="${esc(p.n)}">`;
   else if(f==='pay')ed=`<select><option value="C"${p.pay!=='D'?' selected':''}>Pix/Conta</option><option value="D"${p.pay==='D'?' selected':''}>Dinheiro</option></select>`;
+  else if(f==='rr')ed=`<select><option value="I"${p.rsv&&p.rsv.r==='I'?' selected':''}>Reserva da Igreja</option><option value="P"${p.rsv&&p.rsv.r==='P'?' selected':''}>Reserva Pessoal</option></select>`;
   else ed=`<input type="text" inputmode="decimal" value="${String(p.v).replace('.',',')}">`;
   lf.querySelector('b').outerHTML='<b>'+ed+'</b>';
   const inp=lf.querySelector('input,select');inp.focus();try{if(inp.select)inp.select();}catch(e){}
   const commit=()=>{
     const v=inp.value;
-    if(f==='v')p.v=pv(v);
+    if(f==='v'){p.v=pv(v);if(p.rsvOnly&&p.rsv)p.rsv.v=p.v;}
+    else if(f==='rr'){if(p.rsv)p.rsv.r=v;if(p.rsvOnly)p.a=v;}
     else if(f==='a'){p.a=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
     else if(f==='t'){p.t=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
     else if(f==='c'){p.c=v;p.s='';}
@@ -1151,12 +1274,18 @@ function confirmCard(id){
   if(!requireEdit())return;
   const p=m.p;
   if(!p.v){toast('Informe um valor');return;}
-  if(ehDuplicado(p)&&!confirm('⚠️ Já existe um lançamento igual:\n"'+p.n+'" · '+fmt(p.v)+' · '+p.c+'\n\nLançar assim mesmo?'))return;
-  addTx(p);aprendeAlias(p);
-  if(p.pendRef)abatePendByName(p.pendRef,p.v);
-  else if(p.t==='S'){const pend=findPendByName(p.n,p.a);if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+'?'))pend.pago+=p.v;}
+  const isResv=p.rsvOnly||p.rsv;
+  if(!isResv){
+    if(ehDuplicado(p)&&!confirm('⚠️ Já existe um lançamento igual:\n"'+p.n+'" · '+fmt(p.v)+' · '+p.c+'\n\nLançar assim mesmo?'))return;
+  }
+  addTx(p);
+  if(!isResv){
+    aprendeAlias(p);
+    if(p.pendRef)abatePendByName(p.pendRef,p.v);
+    else if(p.t==='S'){const pend=findPendByName(p.n,p.a);if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+'?'))pend.pago+=p.v;}
+  }
   save();
-  m.state='done';renderChat();toast('✅ Registrado');
+  m.state='done';renderChat();toast(isResv?'🏦 Reserva atualizada':'✅ Registrado');
 }
 function cancelCard(id){chatRemove(id);}
 function unlockPersonalChat(){
@@ -1217,7 +1346,7 @@ async function chatSend(){
   const um=chatPush({type:'user',text:raw});
   if(looksLikeQuestion(raw)){if(renderQueryAnswer(raw)){um.personal=true;renderChat();}return;}
   const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Analisando…':'Analisando…'});
-  const hasPay=/(dinheiro|esp[ée]cie|\bpix\b|\bconta\b|cart[ãa]o|d[ée]bito|cr[ée]dito|dep[óo]sito)/i.test(raw);
+  const hasPay=/(dinheiro|esp[ée]cie|\bpix\b|\bconta\b|cart[ãa]o|d[ée]bito|cr[ée]dito|dep[óo]sito|reserva)/i.test(raw);
   let items=null;
   if(S.cfg.ai&&syncCfg()&&navigator.onLine&&!hasPay){try{items=await aiParse(raw);}catch(e){}}
   if(!items||!items.length)items=raw.split('\n').flatMap(parseLineMulti).filter(Boolean);
@@ -1488,7 +1617,7 @@ async function cloudPush(){
 function schedulePush(){if(!syncCfg())return;clearTimeout(SYNC_TIMER);SYNC_TIMER=setTimeout(cloudPush,1200);}
 /* Fusão inteligente: une lançamentos deste aparelho com os da nuvem (por id).
    Exclusões viajam numa lista (del) para não "ressuscitarem" no outro aparelho. */
-function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp||[],alias:s.alias||{},del:s.del||[]});}
+function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp||[],resv:s.resv||[],alias:s.alias||{},del:s.del||[]});}
 function mergeStates(loc,rem){
   const del=new Set([...(loc.del||[]),...(rem.del||[])]);
   const j={};
@@ -1501,9 +1630,12 @@ function mergeStates(loc,rem){
   const cj={};
   (rem.comp||[]).forEach(c=>{if(!del.has(c.id))cj[c.id]=c;});
   (loc.comp||[]).forEach(c=>{if(!del.has(c.id))cj[c.id]=c;});
+  const rvj={};
+  (rem.resv||[]).forEach(x=>{if(!del.has(x.id))rvj[x.id]=x;});
+  (loc.resv||[]).forEach(x=>{if(!del.has(x.id))rvj[x.id]=x;});
   const alias=Object.assign({},rem.alias||{},loc.alias||{});
   del.forEach(k=>{if(k in alias)delete alias[k];});   // apelidos excluídos não ressuscitam
-  return {cfg:loc.cfg,tx,pend:Object.values(pj),comp:Object.values(cj),
+  return {cfg:loc.cfg,tx,pend:Object.values(pj),comp:Object.values(cj),resv:Object.values(rvj),
     alias,del:[...del],saved:new Date().toISOString()};
 }
 async function cloudPull(silent){
@@ -1976,8 +2108,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('btnReset').onclick=()=>{
     if(!requireEdit())return;
     if(confirm('Apagar TODOS os dados? Exporte um backup antes!')&&confirm('Tem certeza? Esta ação não pode ser desfeita.')){
-      const ids=[...S.tx.map(x=>x.id),...(S.pend||[]).map(x=>x.id),...(S.comp||[]).map(x=>x.id)];
-      S={cfg:S.cfg,tx:[],comp:[],pend:[],alias:{},del:[...(S.del||[]),...ids],saved:null};
+      const ids=[...S.tx.map(x=>x.id),...(S.pend||[]).map(x=>x.id),...(S.comp||[]).map(x=>x.id),...(S.resv||[]).map(x=>x.id)];
+      S={cfg:S.cfg,tx:[],comp:[],pend:[],resv:[],alias:{},del:[...(S.del||[]),...ids],saved:null};
       save();
       setTimeout(()=>location.reload(),1800);
     }};
