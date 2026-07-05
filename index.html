@@ -307,7 +307,9 @@ summary{cursor:pointer;font-weight:700}
     </div>
     <div class="row" style="margin-top:4px">
       <span class="hint" style="font-weight:700">Incluir no relatório:</span>
-      <label class="chk"><input type="checkbox" id="r-reservas"> 🏦 Reservas</label>
+      <label class="chk"><input type="checkbox" id="r-resv-I"> 🏦 Reserva da Igreja</label>
+      <label class="chk"><input type="checkbox" id="r-resv-P"> 🏦 Reserva Pessoal</label>
+      <label class="chk"><input type="checkbox" id="r-resv-X"> 🏦 Reserva Extra</label>
     </div>
     <p class="hint">Para compartilhar: gere o relatório e use Imprimir → Salvar como PDF.</p>
   </div>
@@ -1101,9 +1103,9 @@ function delComp(id){if(confirm('Remover compromisso?')){S.del=S.del||[];S.del.p
 /*==== RELATÓRIOS ====*/
 function relHead(titulo,sub){return `<div class="rep-head"><h2>${titulo}</h2><div class="sub">${sub}</div><div class="sub">Gerado em ${new Date().toLocaleDateString('pt-BR')}</div></div>`;}
 /* Bloco opcional de reservas no relatório (marcado pela caixinha). */
-function reservasRelHTML(){
+function reservasRelHTML(rr){
   resvGuard();
-  const rr=['I','P','X'];
+  rr=(rr&&rr.length)?rr:['I','P','X'];
   const rows=rr.map(r=>`<tr><td>${RESV_NAME[r]}</td><td class="num">${fmt(reservaDinheiro(r))}</td><td class="num">${fmt(reservaConta(r))}</td><td class="num"><b>${fmt(reservaTotal(r))}</b></td></tr>`).join('');
   const tot=rr.reduce((s,r)=>s+reservaTotal(r),0);
   return `<h3>🏦 Reservas</h3><table><tr><th>Reserva</th><th class="num">Dinheiro</th><th class="num">Conta/Pix</th><th class="num">Total</th></tr>${rows}<tr class="total"><td>TOTAL EM RESERVAS</td><td></td><td></td><td class="num">${fmt(tot)}</td></tr></table>`;
@@ -1198,8 +1200,8 @@ function gerarRel(){
   else if(tipo==='prestacao')html=relPrestacao(m);
   else if(tipo==='anual')html=relAnual(a,y);
   else html=relDizimos(y);
-  const chkR=document.getElementById('r-reservas');
-  if(chkR&&chkR.checked)html+=reservasRelHTML();
+  const rr=['I','P','X'].filter(r=>{const c=document.getElementById('r-resv-'+r);return c&&c.checked;});
+  if(rr.length)html+=reservasRelHTML(rr);
   document.getElementById('repout').innerHTML=html;
 }
 
