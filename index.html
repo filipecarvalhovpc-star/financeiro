@@ -992,7 +992,6 @@ function renderDash(a){
      <span class="hint" style="margin-left:auto">Início ${fmt((S.cfg.si[a]||0)+(siD(a)||0))}</span>
     </div>
    </div>
-   ${a==='I'?renderOfertasCultos(m):''}
    <div class="grid c4">
     <div class="kpi g"><div class="lbl">Entradas · ${mLabel(m)}</div><div class="val">${fmt(sum(E))}</div></div>
     <div class="kpi r"><div class="lbl">Saídas</div><div class="val">${fmt(sum(Sd))}</div></div>
@@ -1740,7 +1739,7 @@ async function cloudPush(){
 function schedulePush(){if(!syncCfg())return;clearTimeout(SYNC_TIMER);SYNC_TIMER=setTimeout(cloudPush,1200);}
 /* Fusão inteligente: une lançamentos deste aparelho com os da nuvem (por id).
    Exclusões viajam numa lista (del) para não "ressuscitarem" no outro aparelho. */
-function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp||[],resv:s.resv||[],alias:s.alias||{},del:s.del||[]});}
+function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp||[],resv:s.resv||[],alias:s.alias||{},del:s.del||[],si:(s.cfg&&s.cfg.si)||null,siD:(s.cfg&&s.cfg.siD)||null});}
 function mergeStates(loc,rem){
   const del=new Set([...(loc.del||[]),...(rem.del||[])]);
   const j={};
@@ -1758,7 +1757,14 @@ function mergeStates(loc,rem){
   (loc.resv||[]).forEach(x=>{if(!del.has(x.id))rvj[x.id]=x;});
   const alias=Object.assign({},rem.alias||{},loc.alias||{});
   del.forEach(k=>{if(k in alias)delete alias[k];});   // apelidos excluídos não ressuscitam
-  return {cfg:loc.cfg,tx,pend:Object.values(pj),comp:Object.values(cj),resv:Object.values(rvj),
+  // Saldo inicial (remanescente do mês anterior) sincroniza: vale o do aparelho salvo por último.
+  const cfg=Object.assign({},loc.cfg);
+  const newer=(rem&&rem.saved&&(!loc.saved||String(rem.saved)>String(loc.saved)))?rem:loc;
+  if(newer&&newer.cfg){
+    if(newer.cfg.si)cfg.si=Object.assign({},loc.cfg.si,newer.cfg.si);
+    if(newer.cfg.siD)cfg.siD=Object.assign({},loc.cfg.siD,newer.cfg.siD);
+  }
+  return {cfg,tx,pend:Object.values(pj),comp:Object.values(cj),resv:Object.values(rvj),
     alias,del:[...del],saved:new Date().toISOString()};
 }
 async function cloudPull(silent){
