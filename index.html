@@ -172,6 +172,12 @@ summary{cursor:pointer;font-weight:700}
   nav button .nvt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   nav button.on{background:transparent;color:var(--gold);font-weight:800;box-shadow:none}
   #fab{display:none!important}
+  /* Chat rola a página inteira (nada de caixinha com scroll interno): todo balão aparece completo */
+  #pg-lancar .chatcard{height:auto;min-height:0;overflow:visible;border:none;background:transparent;box-shadow:none;border-radius:0}
+  #pg-lancar .chatfeed{overflow:visible;min-height:0;padding:10px 2px 14px}
+  #pg-lancar{padding-bottom:104px}
+  #pg-lancar .composer{position:fixed;left:0;right:0;bottom:calc(64px + env(safe-area-inset-bottom));z-index:6;border:none;border-top:1px solid var(--line);border-radius:0;background:var(--card);box-shadow:0 -6px 18px rgba(0,0,0,.28);padding:8px 12px}
+  #pg-lancar .pending{position:fixed;left:0;right:0;bottom:calc(128px + env(safe-area-inset-bottom));z-index:6;background:var(--card);border-top:1px solid var(--line)}
 }
 </style>
 </head>
@@ -1203,7 +1209,9 @@ async function aiParse(text){
 let CHAT=[], PENDING_IMGS=[];
 function chatPush(m){m.id=m.id||uid();CHAT.push(m);renderChat();scrollChat();return m;}
 function chatRemove(id){CHAT=CHAT.filter(m=>m.id!==id);renderChat();}
-function scrollChat(){const f=document.getElementById('chatFeed');if(f)f.scrollTop=f.scrollHeight;}
+function scrollChat(){const f=document.getElementById('chatFeed');if(!f)return;f.scrollTop=f.scrollHeight;
+  // No celular o chat rola a página inteira: leva o fim da conversa à vista.
+  try{if(window.matchMedia&&window.matchMedia('(max-width:640px)').matches)requestAnimationFrame(()=>window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}));}catch(e){}}
 function chatStatus(id,text){const m=CHAT.find(x=>x.id===id);if(m){m.text=text;const el=document.querySelector('.msg-status[data-sid="'+id+'"]');if(el)el.textContent=text;}}
 const chatWelcome='<div class="bubble bot">👋 Escreva um lançamento — pode ser solto. Ex.: <b>dízimo Carlos 150</b>, <b>paguei 65 no mercado ontem</b>. Anexe/cole um recibo pelo ＋. Você também pode perguntar, ex.: <b>quanto gastei com lanches em maio?</b></div>';
 function maybeBlur(inner,personal){
