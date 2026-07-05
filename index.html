@@ -537,19 +537,35 @@ const dBr=d=>d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const sum=a=>a.reduce((x,t)=>x+t.v,0);
 const txOf=(a,m,t)=>S.tx.filter(x=>x.a===a&&(!m||mk(x.d)===m)&&(!t||x.t===t));
-const saldoAntes=(a,m)=>S.cfg.si[a]+siD(a)+sum(S.tx.filter(x=>x.a===a&&mk(x.d)<m));
-const saldoAtual=a=>S.cfg.si[a]+siD(a)+sum(S.tx.filter(x=>x.a===a).map(x=>({v:x.t==='E'?x.v:-x.v})));
-// nota: sum acima usa t.v — para saldo, converto sinal:
 function net(list){return list.reduce((x,t)=>x+(t.t==='E'?t.v:-t.v),0);}
-function saldoAte(a,m){ // saldo ao fim do mês m (inclui saldo inicial em conta + dinheiro)
-  return S.cfg.si[a]+siD(a)+net(S.tx.filter(x=>x.a===a&&mk(x.d)<=m));
+/* SALDO POR MÊS INDEPENDENTE: cada mês tem sua própria abertura manual (S.cfg.ini[area][AAAA-MM]={C,D}).
+   Os lançamentos de um mês só afetam aquele mês; nada carrega automaticamente para o mês seguinte. */
+const nowMes=()=>new Date().toISOString().slice(0,7);
+function iniGuard(){S.cfg.ini=S.cfg.ini||{};S.cfg.ini.I=S.cfg.ini.I||{};S.cfg.ini.P=S.cfg.ini.P||{};}
+function iniMes(a,m){iniGuard();return S.cfg.ini[a][m]||{C:0,D:0};}
+function iniConta(a,m){return +iniMes(a,m).C||0;}
+function iniDin(a,m){return +iniMes(a,m).D||0;}
+function setIni(a,m,metodo,v){iniGuard();const e=Object.assign({C:0,D:0},S.cfg.ini[a][m]);if(metodo==='D')e.D=v;else e.C=v;S.cfg.ini[a][m]=e;}
+function saldoConta(a,m){m=m||nowMes();return iniConta(a,m)+net(S.tx.filter(x=>x.a===a&&mk(x.d)===m&&(x.pay||'C')==='C'));}
+function saldoDinheiro(a,m){m=m||nowMes();return iniDin(a,m)+net(S.tx.filter(x=>x.a===a&&mk(x.d)===m&&x.pay==='D'));}
+function saldoTotal(a,m){m=m||nowMes();return saldoConta(a,m)+saldoDinheiro(a,m);}
+function saldoAnterior(a,m){return iniConta(a,m)+iniDin(a,m);} // "saldo do mês anterior" = abertura do mês
+function saldoAte(a,m){return saldoTotal(a,m);}                // saldo ao fim do mês (independente)
+const saldoAntes=(a,m)=>saldoAnterior(a,m);
+const saldoAtual=a=>saldoTotal(a);
+function siD(a){return iniDin(a,nowMes());}
+/* Migração única: a antiga abertura global (S.cfg.si/siD) vira a abertura do 1º mês com lançamentos. */
+function migraIni(){
+  iniGuard();if(S.cfg._iniMig)return;
+  ['I','P'].forEach(a=>{
+    const c=(S.cfg.si&&S.cfg.si[a])||0,d=(S.cfg.siD&&S.cfg.siD[a])||0;
+    if(!(c||d))return;
+    const meses=S.tx.filter(x=>x.a===a).map(x=>mk(x.d)).sort();
+    const m=meses.length?meses[0]:nowMes();
+    if(!S.cfg.ini[a][m])S.cfg.ini[a][m]={C:c,D:d};
+  });
+  S.cfg._iniMig=true;
 }
-function saldoAnterior(a,m){return S.cfg.si[a]+siD(a)+net(S.tx.filter(x=>x.a===a&&mk(x.d)<m));}
-/* Dois caixas por área: 'C' = conta/pix (padrão), 'D' = dinheiro. */
-function siD(a){return (S.cfg.siD&&S.cfg.siD[a])||0;}
-function saldoConta(a){return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&(x.pay||'C')==='C'));}
-function saldoDinheiro(a){return siD(a)+net(S.tx.filter(x=>x.a===a&&x.pay==='D'));}
-function saldoTotal(a){return saldoConta(a)+saldoDinheiro(a);}
 /* Reservas (Etapa 2): livro-razão S.resv[] {id,r:'I'|'P',dir:'in'|'out',v,pay,d,n,grp}.
    Cada movimento de reserva também gera um lançamento na categoria 'Reserva' do caixa da área. */
 const RESV_NAME={I:'Reserva da Igreja',P:'Reserva Pessoal',X:'Reserva Extra'};
@@ -813,8 +829,8 @@ function autoSalario(valor,d,lk){
     parSal(f[0],f[1],usa,d,lk);
     pos+=usa;rest-=usa;
   }
-  // além das faixas: bônus só até zerar o caixa pessoal (entradas externas contam antes)
-  const saldoP=S.cfg.si.P+net(S.tx.filter(x=>x.a==='P'));
+  // além das faixas: bônus só até zerar o caixa pessoal do mês (entradas externas contam antes)
+  const saldoP=saldoTotal('P',mk(d));
   if(saldoP<-0.004)parSal('Bônus extra de salário pastoral','',-saldoP,d,lk);
 }
 
@@ -1055,12 +1071,10 @@ function renderReservas(){
   return `<div class="card"><h2>🏦 Reservas</h2><p class="hint">Guarde ou use dinheiro das reservas direto pelo chat. Ex.: <b>guardar 200 na reserva da igreja</b>, <b>tirei 300 da reserva pessoal</b>, <b>coloca 100 na reserva extra</b>, <b>conta de luz 500, 200 da reserva da igreja</b>.</p></div>
    <div class="grid c2">${reservaCard('I')}${reservaCard('P')}${reservaCard('X')}</div>`;
 }
-/* Saldo remanescente do mês anterior (ponto de partida), editável por método. */
-function setSaldoAnt(a,metodo,val){
+/* Abertura do mês (saldo remanescente), por mês e por método — meses são independentes. */
+function setSaldoAnt(a,m,metodo,val){
   if(!requireEdit()){renderDash(a);return;}
-  const v=pv(val);
-  S.cfg.si=S.cfg.si||{};S.cfg.siD=S.cfg.siD||{};
-  if(metodo==='D')S.cfg.siD[a]=v;else S.cfg.si[a]=v;
+  setIni(a,m,metodo,pv(val));
   save();
 }
 function renderDash(a){
@@ -1071,17 +1085,17 @@ function renderDash(a){
   document.getElementById('dash'+a).innerHTML=`
    <div class="card"><h2>💰 Situação do caixa — ${AREAS[a]}</h2>
     <div class="grid c4">
-     <div class="kpi ${saldoDinheiro(a)>=0?'g':'r'}"><div class="lbl">💵 Dinheiro</div><div class="val">${fmt(saldoDinheiro(a))}</div></div>
-     <div class="kpi ${saldoConta(a)>=0?'b':'r'}"><div class="lbl">🏦 Conta / Pix</div><div class="val">${fmt(saldoConta(a))}</div></div>
-     <div class="kpi ${saldoTotal(a)>=0?'g':'r'}"><div class="lbl">Total disponível</div><div class="val">${fmt(saldoTotal(a))}</div></div>
+     <div class="kpi ${saldoDinheiro(a,m)>=0?'g':'r'}"><div class="lbl">💵 Dinheiro</div><div class="val">${fmt(saldoDinheiro(a,m))}</div></div>
+     <div class="kpi ${saldoConta(a,m)>=0?'b':'r'}"><div class="lbl">🏦 Conta / Pix</div><div class="val">${fmt(saldoConta(a,m))}</div></div>
+     <div class="kpi ${saldoTotal(a,m)>=0?'g':'r'}"><div class="lbl">Total disponível</div><div class="val">${fmt(saldoTotal(a,m))}</div></div>
     </div>
    </div>
    <div class="card no-print" style="padding:9px 14px;margin-bottom:12px">
     <div style="display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap">
-     <b style="font-size:12.5px" title="O que sobrou do mês anterior — ponto de partida deste mês">📅 Saldo do mês anterior</b>
-     <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted)">💵<input type="text" inputmode="decimal" value="${(siD(a)||0).toFixed(2).replace('.',',')}" onchange="setSaldoAnt('${a}','D',this.value)" style="width:94px;padding:5px 8px;font-size:16px"></label>
-     <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted)">🏦<input type="text" inputmode="decimal" value="${(S.cfg.si[a]||0).toFixed(2).replace('.',',')}" onchange="setSaldoAnt('${a}','C',this.value)" style="width:108px;padding:5px 8px;font-size:16px"></label>
-     <span class="hint" style="margin-left:auto">Início ${fmt((S.cfg.si[a]||0)+(siD(a)||0))}</span>
+     <b style="font-size:12.5px" title="Abertura deste mês — cada mês é independente, você define manualmente">📅 Saldo inicial de ${mLabel(m)}</b>
+     <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted)">💵<input type="text" inputmode="decimal" value="${iniDin(a,m).toFixed(2).replace('.',',')}" onchange="setSaldoAnt('${a}','${m}','D',this.value)" style="width:94px;padding:5px 8px;font-size:16px"></label>
+     <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted)">🏦<input type="text" inputmode="decimal" value="${iniConta(a,m).toFixed(2).replace('.',',')}" onchange="setSaldoAnt('${a}','${m}','C',this.value)" style="width:108px;padding:5px 8px;font-size:16px"></label>
+     <span class="hint" style="margin-left:auto">Início ${fmt(iniConta(a,m)+iniDin(a,m))}</span>
     </div>
    </div>
    <div class="grid c4">
@@ -1841,7 +1855,7 @@ async function cloudPush(){
 function schedulePush(){if(!syncCfg())return;clearTimeout(SYNC_TIMER);SYNC_TIMER=setTimeout(cloudPush,1200);}
 /* Fusão inteligente: une lançamentos deste aparelho com os da nuvem (por id).
    Exclusões viajam numa lista (del) para não "ressuscitarem" no outro aparelho. */
-function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp||[],resv:s.resv||[],alias:s.alias||{},del:s.del||[],si:(s.cfg&&s.cfg.si)||null,siD:(s.cfg&&s.cfg.siD)||null});}
+function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp||[],resv:s.resv||[],alias:s.alias||{},del:s.del||[],si:(s.cfg&&s.cfg.si)||null,siD:(s.cfg&&s.cfg.siD)||null,ini:(s.cfg&&s.cfg.ini)||null});}
 function mergeStates(loc,rem){
   const del=new Set([...(loc.del||[]),...(rem.del||[])]);
   const j={};
@@ -1865,6 +1879,7 @@ function mergeStates(loc,rem){
   if(newer&&newer.cfg){
     if(newer.cfg.si)cfg.si=Object.assign({},loc.cfg.si,newer.cfg.si);
     if(newer.cfg.siD)cfg.siD=Object.assign({},loc.cfg.siD,newer.cfg.siD);
+    if(newer.cfg.ini)cfg.ini=newer.cfg.ini;   // aberturas por mês (independentes) sincronizam
   }
   return {cfg,tx,pend:Object.values(pj),comp:Object.values(cj),resv:Object.values(rvj),
     alias,del:[...del],saved:new Date().toISOString()};
@@ -1995,7 +2010,7 @@ function renderConselheiro(){
   const d14=new Date(hoje);d14.setDate(d14.getDate()-13);
   function painel(a,titulo,icone){
     const E=sum(txOf(a,m,'E')),Sd=sum(txOf(a,m,'S'));
-    const saldo=S.cfg.si[a]+net(S.tx.filter(x=>x.a===a));
+    const saldo=saldoTotal(a,m);
     const gasto=(ini,fim)=>sum(S.tx.filter(x=>x.a===a&&x.t==='S'&&x.d>=dISO(ini)&&x.d<=dISO(fim)));
     const semAtual=gasto(d7,hoje),semAnt=gasto(d14,d8);
     const pend=S.pend.filter(p=>p.a===a).reduce((x,p)=>x+Math.max(0,p.total-p.pago),0);
@@ -2120,7 +2135,8 @@ function showNow(pg){
   if(pg==='dados'){renderAliases();renderTrash();renderCatMgr();}
 }
 function refresh(){
-  const sI=S.cfg.si.I+siD('I')+net(S.tx.filter(x=>x.a==='I')),sP=S.cfg.si.P+siD('P')+net(S.tx.filter(x=>x.a==='P'));
+  migraIni();
+  const sI=saldoTotal('I'),sP=saldoTotal('P');
   const cI=document.getElementById('chipI'),cP=document.getElementById('chipP');
   cI.textContent='⛪ '+fmt(sI);cI.className='chip '+(sI>=0?'pos':'neg');
   if(UNLOCKED){cP.textContent='🏠 '+fmt(sP);cP.className='chip '+(sP>=0?'pos':'neg');}
@@ -2363,15 +2379,15 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(n){S.cfg.pinSys=hash(n);save();alert('Senha de abertura alterada.');}
   };
   cloudPull();
-  document.getElementById('cfg-si').value=String(S.cfg.si.I).replace('.',',');
-  document.getElementById('cfg-sp').value=String(S.cfg.si.P).replace('.',',');
+  document.getElementById('cfg-si').value=String(iniConta('I',nowMes())).replace('.',',');
+  document.getElementById('cfg-sp').value=String(iniConta('P',nowMes())).replace('.',',');
   document.getElementById('cfg-mirror').checked=!!S.cfg.mirror;
   document.getElementById('cfg-autosal').checked=S.cfg.autoSal!==false;
   document.getElementById('cfg-ai').checked=!!S.cfg.ai;
   document.getElementById('btnCfg').onclick=()=>{
     if(!requireEdit())return;
-    S.cfg.si.I=pv(document.getElementById('cfg-si').value);
-    S.cfg.si.P=pv(document.getElementById('cfg-sp').value);
+    setIni('I',nowMes(),'C',pv(document.getElementById('cfg-si').value));
+    setIni('P',nowMes(),'C',pv(document.getElementById('cfg-sp').value));
     S.cfg.mirror=document.getElementById('cfg-mirror').checked;
     S.cfg.autoSal=document.getElementById('cfg-autosal').checked;
     S.cfg.ai=document.getElementById('cfg-ai').checked;
