@@ -145,6 +145,15 @@ summary{cursor:pointer;font-weight:700}
 .grpcat-h{display:flex;justify-content:space-between;align-items:baseline;font-weight:800;font-size:15px;border-bottom:2px solid var(--gold);padding-bottom:5px;margin-bottom:4px}
 .grpsub{display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 0}
 .grpcat table td{padding:4px 6px;font-size:13px}
+.cpt{margin:0;border-bottom:1px solid var(--line)}
+.cpt>summary{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 4px;font-weight:600;font-size:14px}
+.cpt>summary::marker{color:var(--gold)}
+.cpt>summary::-webkit-details-marker{color:var(--gold)}
+.cpt .cpt-nm{font-weight:700}
+.cpt[open]>summary{border-bottom:1px dashed var(--line)}
+.cpt-foot{margin-top:10px;border-top:2px solid var(--gold);padding-top:8px;display:flex;flex-direction:column;gap:5px}
+.cpt-foot>div{display:flex;justify-content:space-between;align-items:baseline;font-size:13px}
+.cpt-foot b{font-size:14px;font-variant-numeric:tabular-nums}
 #ptr{position:fixed;top:8px;left:0;right:0;margin:0 auto;width:max-content;max-width:80%;padding:8px 16px;border-radius:999px;background:var(--card);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px;font-weight:700;z-index:150;opacity:0;transform:translateY(-50px);transition:opacity .15s;pointer-events:none}
 #lock{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;padding:14px}
 #lock.off{display:none}
@@ -889,6 +898,30 @@ function catTable(list,a,t){
   });
   return `<table>${rows}<tr class="total"><td>TOTAL</td><td class="num">${fmt(tot)}</td>${t==='S'?'<td class="num">100%</td>':''}</tr></table>`;
 }
+/* Custo Pastoral: visão por beneficiário (acumulado / teto), cada um expansível nos lançamentos. */
+const CUSTO_TIERS=[
+  {n:'Pró-labore Pastor (Pr. Filipe)',label:'Pr. Filipe',cap:1700},
+  {n:'Pró-labore Pastora (Pra. Anna)',label:'Pra. Anna',cap:1700},
+  {n:'Ajuda de custo — Missionário 1',label:'Missionário 1',cap:300},
+  {n:'Ajuda de custo — Missionário 2',label:'Missionário 2',cap:300},
+  {n:'Ajuda de custo — Missionário 3',label:'Missionário 3',cap:300}
+];
+function custoPastoralHTML(items,linha){
+  const usados=new Set();let html='';
+  CUSTO_TIERS.forEach(t=>{
+    const its=items.filter(x=>x.n===t.n);its.forEach(x=>usados.add(x.id));
+    const v=sum(its),cheio=v>=t.cap;
+    html+=`<details class="cpt"><summary><span class="cpt-nm">${t.label}${cheio?' <span class="hint">✓ completo</span>':''}</span><span class="num">${fmt(v)} <span class="hint">/ ${fmt(t.cap)}</span></span></summary>`+
+      (its.length?`<table>${its.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(linha).join('')}</table>`:`<p class="hint" style="padding:6px 10px;margin:0">Nenhum lançamento ainda neste mês.</p>`)+
+      `</details>`;
+  });
+  const outros=items.filter(x=>!usados.has(x.id));
+  if(outros.length)
+    html+=`<details class="cpt"><summary><span class="cpt-nm">Bônus / extras</span><span class="num">${fmt(sum(outros))}</span></summary><table>${outros.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(linha).join('')}</table></details>`;
+  const previsto=CUSTO_TIERS.reduce((s,t)=>s+t.cap,0),pago=sum(items),falta=Math.max(0,previsto-pago);
+  html+=`<div class="cpt-foot"><div><span>📅 Gasto mensal previsto</span><b>${fmt(previsto)}</b></div><div><span>✅ Total já pago</span><b class="pos">${fmt(pago)}</b></div><div><span>⏳ Ainda faltante</span><b class="${falta>0?'neg':'pos'}">${fmt(falta)}</b></div></div>`;
+  return html;
+}
 /* Visão compartimentada (estilo planilha): categoria → subcategoria (Sub-total) → total da categoria */
 function grupoBloco(list,a,t){
   const linha=x=>`<tr><td>${dBr(x.d)}</td><td>${esc(x.n)} <span class="hint" title="${x.pay==='D'?'Dinheiro':'Conta/Pix'}">${x.pay==='D'?'💵':'🏦'}</span></td><td class="num ${t==='E'?'pos':'neg'}">${fmt(x.v)}</td><td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir" onclick="delTx('${x.id}')">🗑️</button></td></tr>`;
@@ -909,7 +942,9 @@ function grupoBloco(list,a,t){
     const items=list.filter(x=>x.c===c);if(!items.length)return;
     const subs=CATS[a][t][c]||[];
     html+=`<div class="grpcat"><div class="grpcat-h"><span>${esc(c)}</span><span class="num">${fmt(sum(items))}</span></div>`;
-    if(subs.length){
+    if(a==='I'&&t==='S'&&c==='Custo Pastoral'){
+      html+=custoPastoralHTML(items,linha);
+    }else if(subs.length){
       subs.forEach(s=>{const si=items.filter(x=>x.s===s);if(!si.length)return;
         html+=`<div class="grpsub"><span>${esc(s)}</span><span class="num">Sub-total ${fmt(sum(si))}</span></div><table>${renderLinhas(si)}</table>`;});
       const rest=items.filter(x=>!x.s||!subs.includes(x.s));
