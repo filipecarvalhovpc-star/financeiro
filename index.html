@@ -515,14 +515,14 @@ const dBr=d=>d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const sum=a=>a.reduce((x,t)=>x+t.v,0);
 const txOf=(a,m,t)=>S.tx.filter(x=>x.a===a&&(!m||mk(x.d)===m)&&(!t||x.t===t));
-const saldoAntes=(a,m)=>S.cfg.si[a]+sum(S.tx.filter(x=>x.a===a&&mk(x.d)<m));
-const saldoAtual=a=>S.cfg.si[a]+sum(S.tx.filter(x=>x.a===a).map(x=>({v:x.t==='E'?x.v:-x.v})));
+const saldoAntes=(a,m)=>S.cfg.si[a]+siD(a)+sum(S.tx.filter(x=>x.a===a&&mk(x.d)<m));
+const saldoAtual=a=>S.cfg.si[a]+siD(a)+sum(S.tx.filter(x=>x.a===a).map(x=>({v:x.t==='E'?x.v:-x.v})));
 // nota: sum acima usa t.v — para saldo, converto sinal:
 function net(list){return list.reduce((x,t)=>x+(t.t==='E'?t.v:-t.v),0);}
-function saldoAte(a,m){ // saldo ao fim do mês m
-  return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&mk(x.d)<=m));
+function saldoAte(a,m){ // saldo ao fim do mês m (inclui saldo inicial em conta + dinheiro)
+  return S.cfg.si[a]+siD(a)+net(S.tx.filter(x=>x.a===a&&mk(x.d)<=m));
 }
-function saldoAnterior(a,m){return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&mk(x.d)<m));}
+function saldoAnterior(a,m){return S.cfg.si[a]+siD(a)+net(S.tx.filter(x=>x.a===a&&mk(x.d)<m));}
 /* Dois caixas por área: 'C' = conta/pix (padrão), 'D' = dinheiro. */
 function siD(a){return (S.cfg.siD&&S.cfg.siD[a])||0;}
 function saldoConta(a){return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&(x.pay||'C')==='C'));}
@@ -962,6 +962,14 @@ function renderReservas(){
   return `<div class="card"><h2>🏦 Reservas</h2><p class="hint">Guarde ou use dinheiro das reservas direto pelo chat. Ex.: <b>guardar 200 na reserva da igreja</b>, <b>tirei 300 da reserva pessoal</b>, <b>conta de luz 500, 200 da reserva da igreja</b>.</p></div>
    <div class="grid c2">${reservaCard('I')}${reservaCard('P')}</div>`;
 }
+/* Saldo remanescente do mês anterior (ponto de partida), editável por método. */
+function setSaldoAnt(a,metodo,val){
+  if(!requireEdit()){renderDash(a);return;}
+  const v=pv(val);
+  S.cfg.si=S.cfg.si||{};S.cfg.siD=S.cfg.siD||{};
+  if(metodo==='D')S.cfg.siD[a]=v;else S.cfg.si[a]=v;
+  save();
+}
 function renderDash(a){
   const m=document.getElementById('m'+a).value||ultimoMes(a);
   document.getElementById('m'+a).value=m;
@@ -974,6 +982,14 @@ function renderDash(a){
      <div class="kpi ${saldoConta(a)>=0?'b':'r'}"><div class="lbl">🏦 Conta / Pix</div><div class="val">${fmt(saldoConta(a))}</div></div>
      <div class="kpi ${saldoTotal(a)>=0?'g':'r'}"><div class="lbl">Total disponível</div><div class="val">${fmt(saldoTotal(a))}</div></div>
     </div>
+   </div>
+   <div class="card no-print"><h2>📅 Saldo remanescente do mês anterior</h2>
+    <p class="hint">O que sobrou do período anterior (ponto de partida). Some direto com as entradas e saídas deste mês. Clique para editar.</p>
+    <div class="grid c2">
+     <label style="font-weight:700">💵 Dinheiro<br><input type="text" inputmode="decimal" value="${(siD(a)||0).toFixed(2).replace('.',',')}" onchange="setSaldoAnt('${a}','D',this.value)" style="width:100%;margin-top:5px;font-size:16px"></label>
+     <label style="font-weight:700">🏦 Conta / Pix<br><input type="text" inputmode="decimal" value="${(S.cfg.si[a]||0).toFixed(2).replace('.',',')}" onchange="setSaldoAnt('${a}','C',this.value)" style="width:100%;margin-top:5px;font-size:16px"></label>
+    </div>
+    <p class="hint" style="margin-top:8px">Início: <b>${fmt((S.cfg.si[a]||0)+(siD(a)||0))}</b> · com este mês → Total disponível <b>${fmt(saldoTotal(a))}</b></p>
    </div>
    ${a==='I'?renderOfertasCultos(m):''}
    <div class="grid c4">
