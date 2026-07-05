@@ -721,6 +721,7 @@ function confirmPrev(){
 function addTx(p){
   if(p.rsvOnly){commitResv(p,null);return;}  // movimento puro de reserva (sem lançamento base)
   const tx={id:uid(),d:p.d,a:p.a,t:p.t,c:p.c,s:p.s||'',n:p.n,v:p.v,pay:p.pay||'C'};
+  if(p.gid)tx.grp=p.gid;                     // lançamentos irmãos (dinheiro+pix da mesma frase)
   S.tx.push(tx);
   if(S.cfg.mirror&&p.a==='I'&&p.t==='S'&&p.c==='Custo Pastoral'&&!p.au){
     S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,pay:'C',lk:tx.id});
@@ -794,15 +795,19 @@ function renderMov(){
 function delTx(id){
   if(!requireEdit())return;
   const tx=S.tx.find(x=>x.id===id);if(!tx)return;
-  if(!confirm('Excluir "'+tx.n+'" ('+fmt(tx.v)+')?'))return;
+  // lançamentos irmãos (dinheiro+pix da mesma frase) são excluídos juntos
+  const mains=tx.grp?S.tx.filter(x=>x.grp===tx.grp):[tx];
+  const mainIds=new Set(mains.map(x=>x.id));
+  const totGrp=mains.reduce((s,x)=>s+x.v,0);
+  if(!confirm('Excluir "'+tx.n+'" ('+fmt(totGrp)+(mains.length>1?' · '+mains.length+' lançamentos':'')+')?'))return;
   S.del=S.del||[];S.trash=S.trash||[];
   const grp=uid(),stamp=Date.now();
-  const removed=S.tx.filter(x=>x.id===id||x.lk===id);
-  removed.forEach(x=>{S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:grp,_main:x.id===id}));});
+  const removed=S.tx.filter(x=>mainIds.has(x.id)||mainIds.has(x.lk));
+  removed.forEach(x=>{S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:grp,_main:mainIds.has(x.id)&&x.id===id}));});
   const remIds=new Set(removed.map(x=>x.id));
   resvGuard();
   S.resv=S.resv.filter(rv=>{if(remIds.has(rv.grp)){S.del.push(rv.id);S.trash.push(Object.assign({},rv,{_del:stamp,_grp:grp,_resv:1}));return false;}return true;});
-  S.tx=S.tx.filter(x=>x.id!==id&&x.lk!==id);save();
+  S.tx=S.tx.filter(x=>!(mainIds.has(x.id)||mainIds.has(x.lk)));save();
 }
 /*==== LIXEIRA (30 dias) — restaura com IDs novos p/ não conflitar com a nuvem ====*/
 function purgeTrash(){S.trash=(S.trash||[]).filter(x=>Date.now()-(x._del||0)<30*864e5);}
@@ -850,6 +855,18 @@ function catTable(list,a,t){
 /* Visão compartimentada (estilo planilha): categoria → subcategoria (Sub-total) → total da categoria */
 function grupoBloco(list,a,t){
   const linha=x=>`<tr><td>${dBr(x.d)}</td><td>${esc(x.n)} <span class="hint" title="${x.pay==='D'?'Dinheiro':'Conta/Pix'}">${x.pay==='D'?'💵':'🏦'}</span></td><td class="num ${t==='E'?'pos':'neg'}">${fmt(x.v)}</td><td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir" onclick="delTx('${x.id}')">🗑️</button></td></tr>`;
+  // linha combinada: lançamentos irmãos (dinheiro+pix da mesma frase) numa linha só, com total
+  const linhaGrp=(g)=>{
+    if(g.length<2||!(g[0].grp||new Set(g.map(x=>x.pay||'C')).size>1))return g.map(linha).join('');
+    const main=g[0],din=g.filter(x=>x.pay==='D').reduce((s,x)=>s+x.v,0),con=g.filter(x=>(x.pay||'C')==='C').reduce((s,x)=>s+x.v,0);
+    const parts=[];if(din)parts.push('💵 '+fmt(din));if(con)parts.push('🏦 '+fmt(con));
+    return `<tr><td>${dBr(main.d)}</td><td>${esc(main.n)} <span class="hint">${parts.join(' · ')}</span></td><td class="num ${t==='E'?'pos':'neg'}"><b>${fmt(din+con)}</b></td><td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${main.id}')">✏️</button><button class="icon" title="Excluir os ${g.length}" onclick="delTx('${main.id}')">🗑️</button></td></tr>`;
+  };
+  const renderLinhas=(items)=>{
+    const groups={},order=[];
+    items.slice().sort((x,y)=>x.d.localeCompare(y.d)).forEach(x=>{const k=x.grp||(x.d+'§'+x.n+'§'+(x.s||''));if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(x);});
+    return order.map(k=>linhaGrp(groups[k])).join('');
+  };
   let html='';
   Object.keys(CATS[a][t]).forEach(c=>{
     const items=list.filter(x=>x.c===c);if(!items.length)return;
@@ -857,11 +874,11 @@ function grupoBloco(list,a,t){
     html+=`<div class="grpcat"><div class="grpcat-h"><span>${esc(c)}</span><span class="num">${fmt(sum(items))}</span></div>`;
     if(subs.length){
       subs.forEach(s=>{const si=items.filter(x=>x.s===s);if(!si.length)return;
-        html+=`<div class="grpsub"><span>${esc(s)}</span><span class="num">Sub-total ${fmt(sum(si))}</span></div><table>${si.sort((x,y)=>x.d.localeCompare(y.d)).map(linha).join('')}</table>`;});
+        html+=`<div class="grpsub"><span>${esc(s)}</span><span class="num">Sub-total ${fmt(sum(si))}</span></div><table>${renderLinhas(si)}</table>`;});
       const rest=items.filter(x=>!x.s||!subs.includes(x.s));
-      if(rest.length)html+=`<div class="grpsub"><span>Outros</span><span class="num">Sub-total ${fmt(sum(rest))}</span></div><table>${rest.sort((x,y)=>x.d.localeCompare(y.d)).map(linha).join('')}</table>`;
+      if(rest.length)html+=`<div class="grpsub"><span>Outros</span><span class="num">Sub-total ${fmt(sum(rest))}</span></div><table>${renderLinhas(rest)}</table>`;
     }else{
-      html+=`<table>${items.sort((x,y)=>x.d.localeCompare(y.d)).map(linha).join('')}</table>`;
+      html+=`<table>${renderLinhas(items)}</table>`;
     }
     html+=`</div>`;
   });
@@ -1142,6 +1159,8 @@ function saveEdit(){
   const g=i=>document.getElementById(i);
   x.d=g('e-d').value;x.a=g('e-area').value;x.t=g('e-t').value;
   x.c=g('e-c').value;x.s=g('e-s').value||'';x.n=g('e-n').value;x.v=pv(g('e-v').value);x.pay=g('e-pay').value;
+  // mantém os irmãos (dinheiro+pix) coerentes: campos compartilhados vão para todos; valor/forma são de cada um
+  if(x.grp)S.tx.filter(y=>y.grp===x.grp&&y.id!==x.id).forEach(y=>{y.d=x.d;y.a=x.a;y.t=x.t;y.c=x.c;y.s=x.s;y.n=x.n;});
   closeModal();save();
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');EDIT_ID=null;}
@@ -1240,6 +1259,23 @@ function cardHtml(m){
       row('d','📅','Data',dBr(p.d))+row('rr','🏦','Reserva',RESV_NAME[p.rsv.r])+row('v','💰','Valor',fmt(p.v))+row('pay','💳','Pagamento',p.pay==='D'?'Dinheiro':'Pix/Conta')+
       `</div><div class="lcard-btns"><button class="btn" data-act="confirm" data-cardid="${m.id}">✅ Confirmar</button><button class="btn sec" data-act="cancel" data-cardid="${m.id}" title="Descartar">✕</button></div></div>`;
   }
+  // ---- Vários lançamentos da mesma frase (ex.: dinheiro + pix) num só balão, com total ----
+  if(m.items){
+    const its=m.items,tot=its.reduce((s,x)=>s+x.v,0);
+    const payLabel=x=>x.pay==='D'?'💵 Dinheiro':'🏦 Pix/Conta';
+    if(m.state==='done'){
+      const brk=its.map(x=>payLabel(x)+' '+fmt(x.v)).join(' · ');
+      return `<div class="lcard done"><div class="lcard-h">✅ Lançamentos registrados</div><div class="done-body"><b>${esc(p.n)}</b> · Total ${fmt(tot)}<br><span class="hint">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span><br><span class="hint">${brk}</span></div></div>`;
+    }
+    const grow=(f,ic,lb,val)=>`<div class="lf" data-cardid="${m.id}" data-f="${f}"><span>${ic} ${lb}</span><b>${val}</b></div>`;
+    const payRow=(x,i)=>`<div class="lf" data-cardid="${m.id}" data-f="v@${i}"><span>${payLabel(x)}</span><b>${fmt(x.v)}</b></div>`;
+    return `<div class="lcard" data-cardid="${m.id}"><div class="lcard-h">🧾 ${its.length} lançamentos numa frase</div><div class="lcard-fields">`+
+      grow('d','📅','Data',dBr(p.d))+grow('a','📂','Área',AREAS[p.a])+grow('t','⬇','Tipo',TIPOS[p.t])+
+      grow('c','📁','Categoria',esc(p.c))+grow('s','📌','Sub',esc(p.s||'—'))+grow('n','📝','Descrição',esc(p.n))+
+      its.map(payRow).join('')+
+      `<div class="lf" style="border-top:1px solid var(--line);margin-top:2px"><span>Σ Total</span><b style="color:var(--green);font-size:15px">${fmt(tot)}</b></div>`+
+      `</div><div class="lcard-btns"><button class="btn" data-act="confirm" data-cardid="${m.id}">✅ Confirmar os ${its.length}</button><button class="btn sec" data-act="cancel" data-cardid="${m.id}" title="Descartar">✕</button></div></div>`;
+  }
   if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Lançamento registrado</div><div class="done-body"><b>${esc(p.n)}</b> · ${fmt(p.v)} · ${payL}<br><span class="hint">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span>${rsvL?'<br><span class="hint">🏦 '+rsvL+'</span>':''}</div></div>`;
   const row=(f,ic,lb,val)=>`<div class="lf" data-cardid="${m.id}" data-f="${f}"><span>${ic} ${lb}</span><b>${val}</b></div>`;
   const rowRO=(ic,lb,val)=>`<div class="lf" style="opacity:.85"><span>${ic} ${lb}</span><b>${val}</b></div>`;
@@ -1253,26 +1289,29 @@ function renderChat(){const f=document.getElementById('chatFeed');if(!f)return;f
 function renderCardById(id){const el=document.querySelector('.lcard[data-cardid="'+id+'"]');const m=CHAT.find(x=>x.id===id);if(el&&m)el.outerHTML=cardHtml(m);}
 function editField(lf){
   const id=lf.dataset.cardid,f=lf.dataset.f,m=CHAT.find(x=>x.id===id);if(!m||m.state)return;const p=m.p;
+  const at=f.indexOf('@'),fld=at<0?f:f.slice(0,at),idx=at<0?null:+f.slice(at+1);
+  const tgt=(idx!=null&&m.items)?m.items[idx]:p;   // valor por item; demais campos compartilhados
   let ed;
-  if(f==='d')ed=`<input type="date" value="${p.d}">`;
-  else if(f==='a')ed=`<select><option value="I"${p.a==='I'?' selected':''}>Igreja</option><option value="P"${p.a==='P'?' selected':''}>Pessoal</option></select>`;
-  else if(f==='t')ed=`<select><option value="E"${p.t==='E'?' selected':''}>Entrada</option><option value="S"${p.t==='S'?' selected':''}>Saída</option></select>`;
-  else if(f==='c')ed=`<select>`+Object.keys(CATS[p.a][p.t]).map(c=>`<option${c===p.c?' selected':''}>${esc(c)}</option>`).join('')+`</select>`;
-  else if(f==='s'){const subs=CATS[p.a][p.t][p.c]||[];ed=`<select><option value=""></option>`+subs.map(s=>`<option${s===p.s?' selected':''}>${esc(s)}</option>`).join('')+`</select>`;}
-  else if(f==='n')ed=`<input type="text" value="${esc(p.n)}">`;
-  else if(f==='pay')ed=`<select><option value="C"${p.pay!=='D'?' selected':''}>Pix/Conta</option><option value="D"${p.pay==='D'?' selected':''}>Dinheiro</option></select>`;
-  else if(f==='rr')ed=`<select><option value="I"${p.rsv&&p.rsv.r==='I'?' selected':''}>Reserva da Igreja</option><option value="P"${p.rsv&&p.rsv.r==='P'?' selected':''}>Reserva Pessoal</option></select>`;
-  else ed=`<input type="text" inputmode="decimal" value="${String(p.v).replace('.',',')}">`;
+  if(fld==='d')ed=`<input type="date" value="${p.d}">`;
+  else if(fld==='a')ed=`<select><option value="I"${p.a==='I'?' selected':''}>Igreja</option><option value="P"${p.a==='P'?' selected':''}>Pessoal</option></select>`;
+  else if(fld==='t')ed=`<select><option value="E"${p.t==='E'?' selected':''}>Entrada</option><option value="S"${p.t==='S'?' selected':''}>Saída</option></select>`;
+  else if(fld==='c')ed=`<select>`+Object.keys(CATS[p.a][p.t]).map(c=>`<option${c===p.c?' selected':''}>${esc(c)}</option>`).join('')+`</select>`;
+  else if(fld==='s'){const subs=CATS[p.a][p.t][p.c]||[];ed=`<select><option value=""></option>`+subs.map(s=>`<option${s===p.s?' selected':''}>${esc(s)}</option>`).join('')+`</select>`;}
+  else if(fld==='n')ed=`<input type="text" value="${esc(p.n)}">`;
+  else if(fld==='pay')ed=`<select><option value="C"${p.pay!=='D'?' selected':''}>Pix/Conta</option><option value="D"${p.pay==='D'?' selected':''}>Dinheiro</option></select>`;
+  else if(fld==='rr')ed=`<select><option value="I"${p.rsv&&p.rsv.r==='I'?' selected':''}>Reserva da Igreja</option><option value="P"${p.rsv&&p.rsv.r==='P'?' selected':''}>Reserva Pessoal</option></select>`;
+  else ed=`<input type="text" inputmode="decimal" value="${String(tgt.v).replace('.',',')}">`;
   lf.querySelector('b').outerHTML='<b>'+ed+'</b>';
   const inp=lf.querySelector('input,select');inp.focus();try{if(inp.select)inp.select();}catch(e){}
+  const spread=()=>{if(m.items)m.items.forEach(x=>{x.d=p.d;x.a=p.a;x.t=p.t;x.c=p.c;x.s=p.s;x.n=p.n;});};
   const commit=()=>{
     const v=inp.value;
-    if(f==='v'){p.v=pv(v);if(p.rsvOnly&&p.rsv)p.rsv.v=p.v;}
-    else if(f==='rr'){if(p.rsv)p.rsv.r=v;if(p.rsvOnly)p.a=v;}
-    else if(f==='a'){p.a=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
-    else if(f==='t'){p.t=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}}
-    else if(f==='c'){p.c=v;p.s='';}
-    else p[f]=v;
+    if(fld==='v'){tgt.v=pv(v);if(p.rsvOnly&&p.rsv)p.rsv.v=p.v;}
+    else if(fld==='rr'){if(p.rsv)p.rsv.r=v;if(p.rsvOnly)p.a=v;}
+    else if(fld==='a'){p.a=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}spread();}
+    else if(fld==='t'){p.t=v;if(!CATS[p.a][p.t][p.c]){p.c=Object.keys(CATS[p.a][p.t])[0];p.s='';}spread();}
+    else if(fld==='c'){p.c=v;p.s='';spread();}
+    else{p[fld]=v;spread();}
     renderCardById(id);
   };
   inp.addEventListener('change',commit);inp.addEventListener('blur',commit);
@@ -1280,6 +1319,15 @@ function editField(lf){
 function confirmCard(id){
   const m=CHAT.find(x=>x.id===id);if(!m||m.state)return;
   if(!requireEdit())return;
+  // ---- Grupo (dinheiro+pix da mesma frase): lança todos de uma vez ----
+  if(m.items){
+    const its=m.items.filter(x=>x.v);
+    if(!its.length){toast('Informe um valor');return;}
+    const gid=uid();
+    its.forEach(x=>{x.gid=gid;addTx(x);aprendeAlias(x);});
+    save();m.state='done';renderChat();toast('✅ '+its.length+' lançamentos registrados');
+    return;
+  }
   const p=m.p;
   if(!p.v){toast('Informe um valor');return;}
   const isResv=p.rsvOnly||p.rsv;
@@ -1362,7 +1410,25 @@ async function chatSend(){
   chatRemove(st.id);
   if(!items||!items.length){chatPush({type:'bot',text:'Não entendi. Tente "dízimo Carlos 150", "mercado 120 hoje" ou pergunte "quanto gastei com lanches em maio?".'});return;}
   if(items.some(p=>p&&p.a==='P'))um.personal=true;
-  items.forEach(p=>chatPush({type:'card',p}));
+  pushLancCards(items);
+}
+/* Junta num MESMO balão os lançamentos idênticos que só mudam a forma de pagamento
+   (ex.: "oferta 62 no pix e 100 em dinheiro") — um confirmar lança os dois de uma vez. */
+function baseKey(p){return [p.a,p.t,p.c,p.s||'',p.n,p.d].join('|');}
+function pushLancCards(items){
+  const used=new Array(items.length).fill(false);
+  for(let i=0;i<items.length;i++){
+    if(used[i])continue;
+    const p=items[i];used[i]=true;
+    if(p.rsv||p.rsvOnly||p.pendRef){chatPush({type:'card',p});continue;}
+    const grp=[p];
+    for(let j=i+1;j<items.length;j++){
+      if(used[j])continue;const q=items[j];
+      if(!q.rsv&&!q.rsvOnly&&!q.pendRef&&baseKey(q)===baseKey(p)){grp.push(q);used[j]=true;}
+    }
+    if(grp.length>1)chatPush({type:'card',items:grp,p:grp[0]});
+    else chatPush({type:'card',p});
+  }
 }
 async function chatImages(files,note){
   note=note||'';
