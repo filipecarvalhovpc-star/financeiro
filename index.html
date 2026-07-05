@@ -158,6 +158,8 @@ summary{cursor:pointer;font-weight:700}
 .dz-arrow{font-weight:700;color:var(--gold);white-space:nowrap}
 .dz-det td:first-child{padding-left:20px}
 .dz-det td{background:rgba(255,255,255,.02)}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:600;cursor:pointer}
+.chk input{width:17px;height:17px;accent-color:var(--gold);cursor:pointer}
 #ptr{position:fixed;top:8px;left:0;right:0;margin:0 auto;width:max-content;max-width:80%;padding:8px 16px;border-radius:999px;background:var(--card);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px;font-weight:700;z-index:150;opacity:0;transform:translateY(-50px);transition:opacity .15s;pointer-events:none}
 #lock{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;padding:14px}
 #lock.off{display:none}
@@ -302,6 +304,10 @@ summary{cursor:pointer;font-weight:700}
       <select id="r-ano"></select>
       <button class="btn" id="btnRel">Gerar</button>
       <button class="btn sec" onclick="window.print()">🖨️ Imprimir / PDF</button>
+    </div>
+    <div class="row" style="margin-top:4px">
+      <span class="hint" style="font-weight:700">Incluir no relatório:</span>
+      <label class="chk"><input type="checkbox" id="r-reservas"> 🏦 Reservas</label>
     </div>
     <p class="hint">Para compartilhar: gere o relatório e use Imprimir → Salvar como PDF.</p>
   </div>
@@ -544,7 +550,7 @@ function saldoDinheiro(a){return siD(a)+net(S.tx.filter(x=>x.a===a&&x.pay==='D')
 function saldoTotal(a){return saldoConta(a)+saldoDinheiro(a);}
 /* Reservas (Etapa 2): livro-razão S.resv[] {id,r:'I'|'P',dir:'in'|'out',v,pay,d,n,grp}.
    Cada movimento de reserva também gera um lançamento na categoria 'Reserva' do caixa da área. */
-const RESV_NAME={I:'Reserva da Igreja',P:'Reserva Pessoal'};
+const RESV_NAME={I:'Reserva da Igreja',P:'Reserva Pessoal',X:'Reserva Extra'};
 function resvGuard(){S.resv=S.resv||[];}
 function reservaSaldo(r,pay){resvGuard();return S.resv.filter(x=>x.r===r&&x.pay===pay).reduce((s,x)=>s+(x.dir==='in'?x.v:-x.v),0);}
 function reservaDinheiro(r){return reservaSaldo(r,'D');}
@@ -636,6 +642,7 @@ function parseLine(line){
    "mercado 50 em dinheiro e 100 no pix" -> 2 lançamentos. Sem método = conta (pix). */
 /* Reservas: detecta alvo (igreja/pessoal), direção (depósito/retirada) e valor. */
 function reservaAlvo(line){
+  if(/reserva\s+extra/i.test(line))return 'X';
   if(/reserva\s+(?:da\s+|do\s+)?igreja|reserva\s+ig\b/i.test(line))return 'I';
   if(/reserva\s+(?:da\s+|do\s+|minha\s+)?pessoal|minha\s+reserva/i.test(line))return 'P';
   if(/reserva/i.test(line))return 'P';
@@ -1033,8 +1040,8 @@ function renderOfertasCultos(m){
    ${rows}<tr class="total"><td>TOTAL</td><td class="num">${fmt(tD)}</td><td class="num">${fmt(tC)}</td><td class="num">${fmt(tD+tC)}</td></tr></table></div></div>`;
 }
 function renderReservas(){
-  return `<div class="card"><h2>🏦 Reservas</h2><p class="hint">Guarde ou use dinheiro das reservas direto pelo chat. Ex.: <b>guardar 200 na reserva da igreja</b>, <b>tirei 300 da reserva pessoal</b>, <b>conta de luz 500, 200 da reserva da igreja</b>.</p></div>
-   <div class="grid c2">${reservaCard('I')}${reservaCard('P')}</div>`;
+  return `<div class="card"><h2>🏦 Reservas</h2><p class="hint">Guarde ou use dinheiro das reservas direto pelo chat. Ex.: <b>guardar 200 na reserva da igreja</b>, <b>tirei 300 da reserva pessoal</b>, <b>coloca 100 na reserva extra</b>, <b>conta de luz 500, 200 da reserva da igreja</b>.</p></div>
+   <div class="grid c2">${reservaCard('I')}${reservaCard('P')}${reservaCard('X')}</div>`;
 }
 /* Saldo remanescente do mês anterior (ponto de partida), editável por método. */
 function setSaldoAnt(a,metodo,val){
@@ -1093,6 +1100,14 @@ function delComp(id){if(confirm('Remover compromisso?')){S.del=S.del||[];S.del.p
 
 /*==== RELATÓRIOS ====*/
 function relHead(titulo,sub){return `<div class="rep-head"><h2>${titulo}</h2><div class="sub">${sub}</div><div class="sub">Gerado em ${new Date().toLocaleDateString('pt-BR')}</div></div>`;}
+/* Bloco opcional de reservas no relatório (marcado pela caixinha). */
+function reservasRelHTML(){
+  resvGuard();
+  const rr=['I','P','X'];
+  const rows=rr.map(r=>`<tr><td>${RESV_NAME[r]}</td><td class="num">${fmt(reservaDinheiro(r))}</td><td class="num">${fmt(reservaConta(r))}</td><td class="num"><b>${fmt(reservaTotal(r))}</b></td></tr>`).join('');
+  const tot=rr.reduce((s,r)=>s+reservaTotal(r),0);
+  return `<h3>🏦 Reservas</h3><table><tr><th>Reserva</th><th class="num">Dinheiro</th><th class="num">Conta/Pix</th><th class="num">Total</th></tr>${rows}<tr class="total"><td>TOTAL EM RESERVAS</td><td></td><td></td><td class="num">${fmt(tot)}</td></tr></table>`;
+}
 function relMensal(a,m){
   const E=txOf(a,m,'E'),Sd=txOf(a,m,'S');
   const sAnt=saldoAnterior(a,m),res=sum(E)-sum(Sd);
@@ -1183,6 +1198,8 @@ function gerarRel(){
   else if(tipo==='prestacao')html=relPrestacao(m);
   else if(tipo==='anual')html=relAnual(a,y);
   else html=relDizimos(y);
+  const chkR=document.getElementById('r-reservas');
+  if(chkR&&chkR.checked)html+=reservasRelHTML();
   document.getElementById('repout').innerHTML=html;
 }
 
