@@ -269,6 +269,7 @@ summary{cursor:pointer;font-weight:700}
     </div>
     <div id="pendList"></div>
   </div>
+  <div id="reservasBox"></div>
   <div id="conselheiro"></div>
 </section>
 
@@ -635,26 +636,23 @@ function parseReserva(line){
   if(!/reserva/i.test(line))return null;
   const r=reservaAlvo(line),dir=reservaDir(line);if(!r)return null;
   const pay=/\b(dinheiro|esp[ée]cie|vivo|m[ãa]os)\b/i.test(line)?'D':'C';
+  // só mexe no caixa quando o usuário mencionar explicitamente o saldo/caixa
+  const mexeCaixa=/\b(saldo|caixa)\b/i.test(line);
   if(dir==='from'){
     const rv=valorDaReserva(line);if(!rv)return null;
     // remove a cláusula da reserva e tenta ler a despesa que sobrou
     const exLine=line.replace(/,?\s*\d+(?:\.\d{3})*(?:[.,]\d{1,2})?\s*(?:reais?)?\s*(?:da|do|de)\s+reserva(?:\s+(?:da\s+|do\s+|minha\s+)?(?:igreja|pessoal))?/i,' ').replace(/\s{2,}/g,' ').trim();
     const ex=parseLine(exLine);
-    if(ex&&ex.v>0){ // retirada cobrindo uma despesa: força a despesa no caixa da reserva
+    if(ex&&ex.v>0){ // retirada cobrindo uma despesa: a despesa entra no caixa e a reserva cobre a parte
       ex.a=r;if(!CATS[ex.a][ex.t][ex.c]){ex.t='S';ex.c=r==='I'?'Gastos Igreja':'Outros';ex.s='';}
-      ex.pay=pay;ex.rsv={dir:'wit',r,v:rv};return [ex];
+      ex.pay=pay;ex.rsv={dir:'wit',r,v:rv,caixa:true};return [ex];
     }
-    // retirada simples (volta pro caixa)
-    return [{d:(ex&&ex.d)||new Date().toISOString().slice(0,10),a:r,t:'E',c:'Reserva',s:'',n:'Retirada — '+RESV_NAME[r],v:rv,pay,rsvOnly:true,rsv:{dir:'wit',r,v:rv}}];
+    // retirada simples: só tira da reserva (só devolve ao caixa se disser "pro saldo/caixa")
+    return [{d:(ex&&ex.d)||new Date().toISOString().slice(0,10),a:r,t:'E',c:'Reserva',s:'',n:'Retirada — '+RESV_NAME[r],v:rv,pay,rsvOnly:true,rsv:{dir:'wit',r,v:rv,caixa:mexeCaixa}}];
   }
-  // depósito
+  // depósito: por padrão SÓ acrescenta na reserva; só debita o caixa se disser "do saldo/caixa"
   const base=parseLine(line);if(!base||!base.v)return null;
-  base.pay=pay;
-  if(base.t==='E'){ // entrou dinheiro novo e foi pra reserva: registra a entrada e move pra reserva
-    base.rsv={dir:'dep',r,v:base.v};return [base];
-  }
-  // apenas separou dinheiro que já existia no caixa
-  return [{d:base.d,a:r,t:'S',c:'Reserva',s:'',n:'Depósito — '+RESV_NAME[r],v:base.v,pay,rsvOnly:true,rsv:{dir:'dep',r,v:base.v}}];
+  return [{d:base.d,a:r,t:'S',c:'Reserva',s:'',n:'Depósito — '+RESV_NAME[r],v:base.v,pay,rsvOnly:true,rsv:{dir:'dep',r,v:base.v,caixa:mexeCaixa}}];
 }
 function parseLineMulti(line){
   const rsv=parseReserva(line);if(rsv)return rsv;
@@ -735,11 +733,28 @@ function addTx(p){
 function commitResv(p,baseId){
   resvGuard();
   const r=p.rsv.r,v=p.rsv.v,pay=p.pay||'C',dep=p.rsv.dir==='dep';
-  const rtx={id:uid(),d:p.d,a:r,t:dep?'S':'E',c:'Reserva',s:'',n:(dep?'→ ':'← ')+RESV_NAME[r],v,pay};
-  if(baseId)rtx.lk=baseId;
-  S.tx.push(rtx);
-  const grp=baseId||rtx.id;
+  let grp;
+  if(p.rsv.caixa){                 // movimenta o caixa: transferência explícita OU custeio de despesa
+    const rtx={id:uid(),d:p.d,a:r,t:dep?'S':'E',c:'Reserva',s:'',n:(dep?'→ ':'← ')+RESV_NAME[r],v,pay};
+    if(baseId)rtx.lk=baseId;
+    S.tx.push(rtx);
+    grp=baseId||rtx.id;
+  }else{
+    grp='rv'+uid();                // só livro-razão da reserva; NÃO debita/credita o caixa
+  }
   S.resv.push({id:uid(),r,dir:dep?'in':'out',v,pay,d:p.d,n:p.rsvOnly?(p.n||''):(p.n||p.c||''),grp});
+}
+/* Exclusão de um movimento de reserva a partir do extrato:
+   se estiver vinculado a um lançamento do caixa, apaga junto; se for só reserva, apaga só o razão. */
+function delResvEntry(id){
+  if(!requireEdit())return;
+  resvGuard();const rv=S.resv.find(x=>x.id===id);if(!rv)return;
+  const tx=S.tx.find(t=>t.id===rv.grp);
+  if(tx){delTx(tx.id);return;}
+  if(!confirm('Remover este movimento da reserva ('+fmt(rv.v)+')?'))return;
+  S.del=S.del||[];S.del.push(id);S.trash=S.trash||[];
+  S.trash.push(Object.assign({},rv,{_del:Date.now(),_grp:uid(),_resv:1,_main:1}));
+  S.resv=S.resv.filter(x=>x.id!==id);save();
 }
 /* Salário automático: cada gasto pessoal gera (1) despesa da igreja em Custo Pastoral
    e (2) entrada pessoal como Repasse, seguindo as faixas mensais:
@@ -914,7 +929,7 @@ function reservaExtrato(r){
   resvGuard();
   const list=S.resv.filter(x=>x.r===r).slice().sort((a,b)=>String(b.d).localeCompare(String(a.d)));
   if(!list.length)return '<p class="hint" style="margin:6px 0">Sem movimentos ainda.</p>';
-  return `<table>${list.map(x=>`<tr><td>${dBr(x.d)}</td><td>${x.dir==='in'?'⬆️ Depósito':'⬇️ Retirada'} ${x.n?'<span class="hint">'+esc(x.n)+'</span>':''} <span class="hint">${x.pay==='D'?'💵':'🏦'}</span></td><td class="num ${x.dir==='in'?'pos':'neg'}">${fmt(x.v)}</td></tr>`).join('')}</table>`;
+  return `<table>${list.map(x=>`<tr><td>${dBr(x.d)}</td><td>${x.dir==='in'?'⬆️ Depósito':'⬇️ Retirada'} ${x.n?'<span class="hint">'+esc(x.n)+'</span>':''} <span class="hint">${x.pay==='D'?'💵':'🏦'}</span></td><td class="num ${x.dir==='in'?'pos':'neg'}">${fmt(x.v)}</td><td class="no-print"><button class="icon" title="Remover" onclick="delResvEntry('${x.id}')">🗑️</button></td></tr>`).join('')}</table>`;
 }
 function reservaCard(r){
   return `<div class="card">
@@ -960,7 +975,6 @@ function renderDash(a){
      <div class="kpi ${saldoTotal(a)>=0?'g':'r'}"><div class="lbl">Total disponível</div><div class="val">${fmt(saldoTotal(a))}</div></div>
     </div>
    </div>
-   ${a==='P'?renderReservas():''}
    ${a==='I'?renderOfertasCultos(m):''}
    <div class="grid c4">
     <div class="kpi g"><div class="lbl">Entradas · ${mLabel(m)}</div><div class="val">${fmt(sum(E))}</div></div>
@@ -1885,9 +1899,40 @@ function renderConselheiro(){
       <div class="kpi ${projecao>=0?'g':'r'}"><div class="lbl">Projeção fim do mês</div><div class="val">${fmt(projecao)}</div></div>
      </div>
      ${dicas.map(t=>`<p style="margin:8px 0 0">${t}</p>`).join('')}
+     <div class="row no-print" style="margin-top:10px"><button class="btn sec" onclick="conselhoIA('${a}')">🤖 Pedir conselho da IA</button><span class="hint">Análise personalizada dos seus números (requer Modo IA).</span></div>
+     <div id="cia-${a}"></div>
     </div>`;
   }
   el.innerHTML=painel('I','Conselheiro — Igreja','⛪')+painel('P','Conselheiro — Pessoal','🧭');
+}
+/* Resumo dos números reais enviado à IA para um conselho personalizado. */
+function resumoConselho(a){
+  const hoje=new Date(),m=hoje.toISOString().slice(0,7),mAnt=prevMonth(m);
+  const catSum=(t,mm)=>{const o={};S.tx.filter(x=>x.a===a&&x.t===t&&mk(x.d)===mm&&x.c!=='Reserva').forEach(x=>o[x.c]=(o[x.c]||0)+x.v);const e=Object.entries(o).sort((x,y)=>y[1]-x[1]);return e.length?e.map(([c,v])=>c+' '+fmt(v)).join('; '):'—';};
+  const rr=a;
+  const pend=(S.pend||[]).filter(p=>p.a===a&&(p.total-p.pago)>0).map(p=>p.desc+' '+fmt(Math.max(0,p.total-p.pago))).join('; ')||'nenhuma';
+  return [
+    'Área: '+(a==='I'?'Finanças da IGREJA (uma igreja evangélica/Assembleia de Deus).':'Finanças PESSOAIS do pastor Filipe e da esposa Anna.'),
+    'Caixa hoje — dinheiro '+fmt(saldoDinheiro(a))+', conta/pix '+fmt(saldoConta(a))+', total '+fmt(saldoTotal(a))+'.',
+    'Reserva'+(a==='I'?' da igreja':' pessoal')+' — dinheiro '+fmt(reservaDinheiro(rr))+', conta '+fmt(reservaConta(rr))+', total '+fmt(reservaTotal(rr))+'.',
+    'Entradas deste mês por categoria: '+catSum('E',m)+'.',
+    'Saídas deste mês por categoria: '+catSum('S',m)+'.',
+    'Saídas do mês passado por categoria: '+catSum('S',mAnt)+'.',
+    'Pendências em aberto: '+pend+'.'
+  ].join('\n');
+}
+async function conselhoIA(a){
+  const box=document.getElementById('cia-'+a);if(!box)return;
+  const c=syncCfg();
+  if(!c||!S.cfg.ai||!navigator.onLine){box.innerHTML='<p class="hint" style="margin-top:8px">🤖 O conselho por IA precisa de internet e do <b>Modo IA</b> ligado (aba Dados). Enquanto isso, valem as dicas acima.</p>';return;}
+  box.innerHTML='<p class="hint" style="margin-top:8px">🤖 Consultando o conselheiro… um instante.</p>';
+  try{
+    const r=await fetch(c.url+'?k='+encodeURIComponent(c.key||'')+'&action=conselho&area='+a,{method:'POST',body:resumoConselho(a)});
+    const j=await r.json();
+    if(j&&j.ok&&j.texto){
+      box.innerHTML='<div class="card" style="background:var(--bg);margin-top:10px"><h3 style="text-transform:none;color:var(--gold);font-size:14px;letter-spacing:0">🤖 Conselho personalizado</h3>'+String(j.texto).split(/\n+/).filter(s=>s.trim()).map(s=>'<p style="margin:6px 0;line-height:1.55">'+esc(s.trim())+'</p>').join('')+'<p class="hint" style="margin-top:8px">Orientação gerada por IA a partir dos seus números — use com discernimento e oração.</p></div>';
+    }else box.innerHTML='<p class="hint" style="margin-top:8px">Não consegui gerar o conselho agora'+(j&&j.error?' ('+esc(j.error)+')':'')+'. Confira se o Apps Script foi atualizado com a versão que tem o modo conselho.</p>';
+  }catch(e){box.innerHTML='<p class="hint" style="margin-top:8px">Sem conexão com a IA no momento. Tente novamente mais tarde.</p>';}
 }
 
 /*==== SESSÃO: BLOQUEIO AUTOMÁTICO + CRONÔMETRO ====*/
@@ -1936,7 +1981,7 @@ function showNow(pg){
   document.querySelectorAll('section.page').forEach(s=>s.classList.toggle('on',s.id==='pg-'+pg));
   if(pg==='mov')renderMov();
   if(pg==='dashI')renderDash('I');
-  if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();}
+  if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();const rb=document.getElementById('reservasBox');if(rb)rb.innerHTML=renderReservas();}
   if(pg==='dados'){renderAliases();renderTrash();renderCatMgr();}
 }
 function refresh(){
