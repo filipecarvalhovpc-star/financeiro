@@ -619,6 +619,11 @@ function parseLine(line){
   n=n.replace(/^(entrada pessoal externa|d[ií]zimos?|repasse|benef[ií]cios?|caridade|doa[çc][ãa]o|ofertas?)\s+(?:de\s+|da\s+|do\s+)?/i,'').trim();
   n=n.replace(/\b(reais|real|conto|contos|pila|pilas|pau|paus)\b/gi,' ').replace(/\s{2,}/g,' ').trim();
   n=n.replace(/^((?:de|do|da|no|na|em|com|pra|para|pro|recebi|recebido|paguei|pagar|gastei|comprei|comprar|ganhei|ganhou)\s+)+/i,'').replace(/\s+(?:de|do|da|no|na|em|com|pra|para|pro)$/i,'').trim();
+  // instruções ao app não entram na descrição: dica de alias, pedido de abater pendência, marcador "despesa pessoal"
+  n=n.replace(/\s*[-–—(,;:]\s*\(?\s*(?:sempre|quando)\b[^)]*\)?\s*$/i,'')
+     .replace(/[\s,;.:\-–—]*\b(?:pra|para|e|favor|por favor)?\s*(?:abat[ea]r?|quit[ae]r?|dar\s+baixa|baixar)\s+(?:n[oa]s?\s+|em\s+|as\s+)?pend[êe]ncias?\b.*$/i,'')
+     .replace(/[\s,;.:\-–—]*\b(?:despesa|gasto)\s+pessoal\b/i,'')
+     .replace(/\s{2,}/g,' ').replace(/^[\s,;.:\-–—(]+|[\s,;.:\-–—]+$/g,'').trim();
   if(n)n=n.charAt(0).toUpperCase()+n.slice(1);
   if(!n)n=c;
   return {d:dstr,a,t,c,s:sc,n,v:val,pendRef};
