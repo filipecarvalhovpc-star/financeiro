@@ -781,16 +781,34 @@ function renderMov(){
   if(!UNLOCKED)list=list.filter(x=>x.a!=='P');
   list.sort((a,b)=>b.d.localeCompare(a.d));
   document.getElementById('f-count').textContent=list.length+' lançamento(s) · Entradas '+fmt(sum(list.filter(x=>x.t==='E')))+' · Saídas '+fmt(sum(list.filter(x=>x.t==='S')))+((!UNLOCKED&&temP)?' · 🔒 lançamentos pessoais ocultos (clique no cadeado 🏠 no topo)':'');
-  document.getElementById('movtable').innerHTML='<tr><th>Data</th><th>Área</th><th></th><th>Categoria</th><th>Descrição</th><th class="num">Valor</th><th></th></tr>'+
-   list.slice(0,400).map(x=>`<tr>
+  const trOne=x=>`<tr>
+    <td>${dBr(x.d)}</td>
+    <td><span class="badge ${x.a}">${AREAS[x.a]}</span></td>
+    <td><span class="badge ${x.t}">${x.t==='E'?'▲':'▼'}</span></td>
+    <td>${esc(x.c)}${x.s?' › '+esc(x.s):''}</td>
+    <td>${esc(x.n)} <span class="hint" title="${x.pay==='D'?'Dinheiro':'Conta/Pix'}">${x.pay==='D'?'💵':'🏦'}</span></td>
+    <td class="num ${x.t==='E'?'pos':'neg'}">${fmt(x.v)}</td>
+    <td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir" onclick="delTx('${x.id}')">🗑️</button></td>
+  </tr>`;
+  // lançamentos irmãos (dinheiro+pix da mesma frase) numa única linha, com total
+  const trGrp=g=>{
+    if(g.length<2||!(g[0].grp||new Set(g.map(y=>y.pay||'C')).size>1))return g.map(trOne).join('');
+    const x=g[0],din=g.filter(y=>y.pay==='D').reduce((s,y)=>s+y.v,0),con=g.filter(y=>(y.pay||'C')==='C').reduce((s,y)=>s+y.v,0),tot=din+con;
+    const parts=[];if(din)parts.push('💵 '+fmt(din));if(con)parts.push('🏦 '+fmt(con));
+    return `<tr>
     <td>${dBr(x.d)}</td>
     <td><span class="badge ${x.a}">${AREAS[x.a]}</span></td>
     <td><span class="badge ${x.t}">${x.t==='E'?'▲':'▼'}</span></td>
     <td>${esc(x.c)}${x.s?' › '+esc(x.s):''}</td>
     <td>${esc(x.n)}</td>
-    <td class="num ${x.t==='E'?'pos':'neg'}">${fmt(x.v)}</td>
-    <td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir" onclick="delTx('${x.id}')">🗑️</button></td>
-  </tr>`).join('')+(list.length>400?'<tr><td colspan="7" class="hint">Mostrando 400 de '+list.length+'…</td></tr>':'');
+    <td class="num ${x.t==='E'?'pos':'neg'}"><span class="hint" style="display:block;font-weight:600">${parts.join(' · ')}</span><b>${fmt(tot)}</b></td>
+    <td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir os ${g.length}" onclick="delTx('${x.id}')">🗑️</button></td>
+  </tr>`;
+  };
+  const groups={},order=[];
+  list.forEach(x=>{const k=x.grp||(x.d+'§'+x.a+'§'+x.t+'§'+x.c+'§'+(x.s||'')+'§'+x.n);if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(x);});
+  document.getElementById('movtable').innerHTML='<tr><th>Data</th><th>Área</th><th></th><th>Categoria</th><th>Descrição</th><th class="num">Valor</th><th></th></tr>'+
+   order.slice(0,400).map(k=>trGrp(groups[k])).join('')+(order.length>400?'<tr><td colspan="7" class="hint">Mostrando 400 de '+order.length+'…</td></tr>':'');
 }
 function delTx(id){
   if(!requireEdit())return;
