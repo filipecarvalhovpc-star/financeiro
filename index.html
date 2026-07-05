@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v5.1 -->
+<!-- AD Ágape Financeiro — v5.2 (abre no mês atual) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -1078,7 +1078,7 @@ function setSaldoAnt(a,m,metodo,val){
   save();
 }
 function renderDash(a){
-  const m=document.getElementById('m'+a).value||ultimoMes(a);
+  const m=document.getElementById('m'+a).value||nowMes();
   document.getElementById('m'+a).value=m;
   const E=txOf(a,m,'E'),Sd=txOf(a,m,'S');
   const sAnt=saldoAnterior(a,m),res=sum(E)-sum(Sd),sFim=sAnt+res;
