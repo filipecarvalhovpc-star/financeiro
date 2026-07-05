@@ -719,6 +719,9 @@ function confirmPrev(){
 }
 function addTx(p){
   if(p.rsvOnly){commitResv(p,null);return;}  // movimento puro de reserva (sem lançamento base)
+  // "SD" na descrição = gasto pessoal que NÃO gera salário pastoral: desconto direto no saldo pessoal
+  const semSalario=p.a==='P'&&p.t==='S'&&/(^|[\s\-–—,.:(])SD([\s\-–—,.:)]|$)/i.test(' '+(p.n||'')+' ');
+  if(semSalario)p.n=(p.n||'').replace(/[\s\-–—,.:()\[\]]*\bSD\b[\s\-–—,.:()\[\]]*/ig,' ').replace(/\s{2,}/g,' ').replace(/^[\s\-–—,.:()\[\]]+|[\s\-–—,.:()\[\]]+$/g,'').trim()||p.c;
   const tx={id:uid(),d:p.d,a:p.a,t:p.t,c:p.c,s:p.s||'',n:p.n,v:p.v,pay:p.pay||'C'};
   if(p.gid)tx.grp=p.gid;                     // lançamentos irmãos (dinheiro+pix da mesma frase)
   S.tx.push(tx);
@@ -726,8 +729,8 @@ function addTx(p){
     S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,pay:'C',lk:tx.id});
   }
   if(p.rsv)commitResv(p,tx.id);           // efeito na reserva vinculado a este lançamento
-  // gastos pessoais geram o salário pago pela igreja (faixas) — excluídas as entradas
-  if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S'&&p.c!=='Reserva')autoSalario(p.v,p.d,tx.id);
+  // gastos pessoais geram o salário pago pela igreja (faixas) — excluídas as entradas e os marcados "SD"
+  if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S'&&p.c!=='Reserva'&&!semSalario)autoSalario(p.v,p.d,tx.id);
 }
 /* Efetiva o movimento de reserva: (1) lançamento na categoria 'Reserva' do caixa da área,
    (2) entrada no livro-razão S.resv. Vinculado ao lançamento base (baseId) p/ excluir junto. */
