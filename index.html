@@ -154,6 +154,10 @@ summary{cursor:pointer;font-weight:700}
 .cpt-foot{margin-top:10px;border-top:2px solid var(--gold);padding-top:8px;display:flex;flex-direction:column;gap:5px}
 .cpt-foot>div{display:flex;justify-content:space-between;align-items:baseline;font-size:13px}
 .cpt-foot b{font-size:14px;font-variant-numeric:tabular-nums}
+.dz-sum:hover td{background:var(--card)}
+.dz-arrow{font-weight:700;color:var(--gold);white-space:nowrap}
+.dz-det td:first-child{padding-left:20px}
+.dz-det td{background:rgba(255,255,255,.02)}
 #ptr{position:fixed;top:8px;left:0;right:0;margin:0 auto;width:max-content;max-width:80%;padding:8px 16px;border-radius:999px;background:var(--card);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px;font-weight:700;z-index:150;opacity:0;transform:translateY(-50px);transition:opacity .15s;pointer-events:none}
 #lock{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;align-items:center;justify-content:center;padding:14px}
 #lock.off{display:none}
@@ -927,6 +931,30 @@ function custoPastoralHTML(items,linha){
   html+=`<div class="cpt-foot"><div><span>📅 Gasto mensal previsto</span><b>${fmt(previsto)}</b></div><div><span>✅ Total já pago</span><b class="pos">${fmt(pago)}</b></div><div><span>⏳ Ainda faltante</span><b class="${falta>0?'neg':'pos'}">${fmt(falta)}</b></div></div>`;
   return html;
 }
+/* Dízimos: vários lançamentos da MESMA pessoa no mês viram uma linha "Acumulado" (clicável). */
+function dizimosHTML(items,linha,t){
+  const groups={},order=[];
+  items.slice().sort((a,b)=>a.d.localeCompare(b.d)).forEach(x=>{const k=aliasNorm(x.n||'')||('#'+x.id);if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(x);});
+  let html='';
+  order.forEach(k=>{
+    const g=groups[k];
+    if(g.length<2){html+=linha(g[0]);return;}
+    const gid='det-'+g[0].id,total=sum(g);
+    html+=`<tr class="dz-sum" onclick="toggleDz('${gid}',this)" style="cursor:pointer">`+
+      `<td><span class="dz-arrow hint">▸ Acumulado</span></td>`+
+      `<td>${esc(g[0].n)} <span class="hint">${g.length} lançamentos</span></td>`+
+      `<td class="num ${t==='E'?'pos':'neg'}"><b>${fmt(total)}</b></td>`+
+      `<td class="no-print"></td></tr>`;
+    g.forEach(x=>{html+=linha(x).replace('<tr>','<tr class="'+gid+' dz-det" style="display:none">');});
+  });
+  return html;
+}
+function toggleDz(gid,el){
+  const rows=document.querySelectorAll('tr.'+gid);if(!rows.length)return;
+  const abrir=rows[0].style.display==='none';
+  rows.forEach(r=>r.style.display=abrir?'':'none');
+  const a=el.querySelector('.dz-arrow');if(a)a.textContent=(abrir?'▾':'▸')+' Acumulado';
+}
 /* Visão compartimentada (estilo planilha): categoria → subcategoria (Sub-total) → total da categoria */
 function grupoBloco(list,a,t){
   const linha=x=>`<tr><td>${dBr(x.d)}</td><td>${esc(x.n)} <span class="hint" title="${x.pay==='D'?'Dinheiro':'Conta/Pix'}">${x.pay==='D'?'💵':'🏦'}</span></td><td class="num ${t==='E'?'pos':'neg'}">${fmt(x.v)}</td><td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir" onclick="delTx('${x.id}')">🗑️</button></td></tr>`;
@@ -949,6 +977,8 @@ function grupoBloco(list,a,t){
     html+=`<div class="grpcat"><div class="grpcat-h"><span>${esc(c)}</span><span class="num">${fmt(sum(items))}</span></div>`;
     if(a==='I'&&t==='S'&&c==='Custo Pastoral'){
       html+=custoPastoralHTML(items,linha);
+    }else if(a==='I'&&t==='E'&&c==='Dízimos'){
+      html+=`<table>${dizimosHTML(items,linha,t)}</table>`;
     }else if(subs.length){
       subs.forEach(s=>{const si=items.filter(x=>x.s===s);if(!si.length)return;
         html+=`<div class="grpsub"><span>${esc(s)}</span><span class="num">Sub-total ${fmt(sum(si))}</span></div><table>${renderLinhas(si)}</table>`;});
