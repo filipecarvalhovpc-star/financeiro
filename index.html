@@ -412,6 +412,7 @@ function responder(e){
     <div class="row">
       <input type="text" id="e-n" placeholder="Descrição" style="flex:1;min-width:160px">
       <input type="text" id="e-v" placeholder="Valor" style="width:110px">
+      <select id="e-pay"><option value="C">🏦 Pix/Conta</option><option value="D">💵 Dinheiro</option></select>
     </div>
     <div class="row">
       <button class="btn" onclick="saveEdit()">Salvar alterações</button>
@@ -515,6 +516,11 @@ function saldoAte(a,m){ // saldo ao fim do mês m
   return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&mk(x.d)<=m));
 }
 function saldoAnterior(a,m){return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&mk(x.d)<m));}
+/* Dois caixas por área: 'C' = conta/pix (padrão), 'D' = dinheiro. */
+function siD(a){return (S.cfg.siD&&S.cfg.siD[a])||0;}
+function saldoConta(a){return S.cfg.si[a]+net(S.tx.filter(x=>x.a===a&&(x.pay||'C')==='C'));}
+function saldoDinheiro(a){return siD(a)+net(S.tx.filter(x=>x.a===a&&x.pay==='D'));}
+function saldoTotal(a){return saldoConta(a)+saldoDinheiro(a);}
 function ultimoMes(a){const ms=S.tx.filter(x=>!a||x.a===a).map(x=>mk(x.d)).sort();return ms.length?ms[ms.length-1]:new Date().toISOString().slice(0,7);}
 
 /*==== PARSER CONVERSACIONAL ====*/
@@ -592,6 +598,21 @@ function parseLine(line){
   if(!n)n=c;
   return {d:dstr,a,t,c,s:sc,n,v:val,pendRef};
 }
+/* Suporta pagamento por Dinheiro/Pix e lançamento duplo numa frase:
+   "mercado 50 em dinheiro e 100 no pix" -> 2 lançamentos. Sem método = conta (pix). */
+function parseLineMulti(line){
+  const base=parseLine(line);if(!base)return [];
+  const re=/(\d+(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:reais?|conto?s?|pila)?\s*(?:em|no|na|de|via|pelo|pela)?\s*(dinheiro|esp[ée]cie|m[ãa]os|vivo|pix|conta|cart[ãa]o|transfer\w*|d[ée]bito|cr[ée]dito|dep[óo]sito|banco)\b/gi;
+  const segs=[];let m;
+  while((m=re.exec(line)))segs.push({v:pv(m[1]),pay:(/dinheiro|esp[ée]cie|m[ãa]os|vivo/i.test(m[2])?'D':'C')});
+  if(segs.length){
+    let n=String(base.n||'').replace(/\b(dinheiro|esp[ée]cie|pix|conta|cart[ãa]o|d[ée]bito|cr[ée]dito|dep[óo]sito|banco|em|no|na|via)\b/gi,' ').replace(/\d+(?:[.,]\d+)*/g,' ').replace(/\s{2,}/g,' ').replace(/^[\s\-–,.:e]+|[\s\-–,.:e]+$/gi,'').trim();
+    if(n)n=n.charAt(0).toUpperCase()+n.slice(1);else n=base.c;
+    return segs.map(s=>Object.assign({},base,{v:s.v,pay:s.pay,n}));
+  }
+  base.pay='C';
+  return [base];
+}
 
 /*==== LANÇAR: PREVIEW ====*/
 let PREV=[];
@@ -641,10 +662,10 @@ function confirmPrev(){
   document.getElementById('qin').value='';
 }
 function addTx(p){
-  const tx={id:uid(),d:p.d,a:p.a,t:p.t,c:p.c,s:p.s||'',n:p.n,v:p.v};
+  const tx={id:uid(),d:p.d,a:p.a,t:p.t,c:p.c,s:p.s||'',n:p.n,v:p.v,pay:p.pay||'C'};
   S.tx.push(tx);
   if(S.cfg.mirror&&p.a==='I'&&p.t==='S'&&p.c==='Custo Pastoral'&&!p.au){
-    S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,lk:tx.id});
+    S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,pay:'C',lk:tx.id});
   }
   // gastos pessoais geram o salário pago pela igreja (faixas) — excluídas as entradas
   if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S')autoSalario(p.v,p.d,tx.id);
@@ -753,7 +774,7 @@ function catTable(list,a,t){
 }
 /* Visão compartimentada (estilo planilha): categoria → subcategoria (Sub-total) → total da categoria */
 function grupoBloco(list,a,t){
-  const linha=x=>`<tr><td>${dBr(x.d)}</td><td>${esc(x.n)}</td><td class="num ${t==='E'?'pos':'neg'}">${fmt(x.v)}</td><td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir" onclick="delTx('${x.id}')">🗑️</button></td></tr>`;
+  const linha=x=>`<tr><td>${dBr(x.d)}</td><td>${esc(x.n)} <span class="hint" title="${x.pay==='D'?'Dinheiro':'Conta/Pix'}">${x.pay==='D'?'💵':'🏦'}</span></td><td class="num ${t==='E'?'pos':'neg'}">${fmt(x.v)}</td><td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${x.id}')">✏️</button><button class="icon" title="Excluir" onclick="delTx('${x.id}')">🗑️</button></td></tr>`;
   let html='';
   Object.keys(CATS[a][t]).forEach(c=>{
     const items=list.filter(x=>x.c===c);if(!items.length)return;
@@ -784,6 +805,13 @@ function renderDash(a){
   const E=txOf(a,m,'E'),Sd=txOf(a,m,'S');
   const sAnt=saldoAnterior(a,m),res=sum(E)-sum(Sd),sFim=sAnt+res;
   document.getElementById('dash'+a).innerHTML=`
+   <div class="card"><h2>💰 Situação do caixa — ${AREAS[a]}</h2>
+    <div class="grid c4">
+     <div class="kpi ${saldoDinheiro(a)>=0?'g':'r'}"><div class="lbl">💵 Dinheiro</div><div class="val">${fmt(saldoDinheiro(a))}</div></div>
+     <div class="kpi ${saldoConta(a)>=0?'b':'r'}"><div class="lbl">🏦 Conta / Pix</div><div class="val">${fmt(saldoConta(a))}</div></div>
+     <div class="kpi ${saldoTotal(a)>=0?'g':'r'}"><div class="lbl">Total disponível</div><div class="val">${fmt(saldoTotal(a))}</div></div>
+    </div>
+   </div>
    <div class="grid c4">
     <div class="kpi g"><div class="lbl">Entradas · ${mLabel(m)}</div><div class="val">${fmt(sum(E))}</div></div>
     <div class="kpi r"><div class="lbl">Saídas</div><div class="val">${fmt(sum(Sd))}</div></div>
@@ -991,14 +1019,14 @@ function editTx(id){
   EDIT_ID=id;const g=i=>document.getElementById(i);
   g('e-d').value=x.d;g('e-area').value=x.a;g('e-t').value=x.t;
   fillEditCats();g('e-c').value=x.c;fillEditSubs();g('e-s').value=x.s||'';
-  g('e-n').value=x.n;g('e-v').value=String(x.v).replace('.',',');
+  g('e-n').value=x.n;g('e-v').value=String(x.v).replace('.',',');g('e-pay').value=x.pay||'C';
   document.getElementById('modal').classList.add('open');
 }
 function saveEdit(){
   const x=S.tx.find(t=>t.id===EDIT_ID);if(!x)return closeModal();
   const g=i=>document.getElementById(i);
   x.d=g('e-d').value;x.a=g('e-area').value;x.t=g('e-t').value;
-  x.c=g('e-c').value;x.s=g('e-s').value||'';x.n=g('e-n').value;x.v=pv(g('e-v').value);
+  x.c=g('e-c').value;x.s=g('e-s').value||'';x.n=g('e-n').value;x.v=pv(g('e-v').value);x.pay=g('e-pay').value;
   closeModal();save();
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');EDIT_ID=null;}
@@ -1084,11 +1112,12 @@ function chatMsg(m){
 }
 function cardHtml(m){
   const p=m.p;
-  if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Lançamento registrado</div><div class="done-body"><b>${esc(p.n)}</b> · ${fmt(p.v)}<br><span class="hint">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span></div></div>`;
+  const payL=p.pay==='D'?'💵 Dinheiro':'🏦 Pix/Conta';
+  if(m.state==='done')return `<div class="lcard done"><div class="lcard-h">✅ Lançamento registrado</div><div class="done-body"><b>${esc(p.n)}</b> · ${fmt(p.v)} · ${payL}<br><span class="hint">${TIPOS[p.t]} · ${esc(p.c)}${p.s?' › '+esc(p.s):''} · ${dBr(p.d)}</span></div></div>`;
   const row=(f,ic,lb,val)=>`<div class="lf" data-cardid="${m.id}" data-f="${f}"><span>${ic} ${lb}</span><b>${val}</b></div>`;
   return `<div class="lcard" data-cardid="${m.id}"><div class="lcard-h">🧾 Lançamento encontrado</div><div class="lcard-fields">`+
     row('d','📅','Data',dBr(p.d))+row('a','📂','Área',AREAS[p.a])+row('t','⬇','Tipo',TIPOS[p.t])+
-    row('c','📁','Categoria',esc(p.c))+row('s','📌','Sub',esc(p.s||'—'))+row('n','📝','Descrição',esc(p.n))+row('v','💰','Valor',fmt(p.v))+
+    row('c','📁','Categoria',esc(p.c))+row('s','📌','Sub',esc(p.s||'—'))+row('n','📝','Descrição',esc(p.n))+row('v','💰','Valor',fmt(p.v))+row('pay','💳','Pagamento',p.pay==='D'?'Dinheiro':'Pix/Conta')+
     `</div><div class="lcard-btns"><button class="btn" data-act="confirm" data-cardid="${m.id}">✅ Confirmar lançamento</button><button class="btn sec" data-act="cancel" data-cardid="${m.id}" title="Descartar">✕</button></div></div>`;
 }
 function renderChat(){const f=document.getElementById('chatFeed');if(!f)return;f.innerHTML=CHAT.length?CHAT.map(chatMsg).join(''):chatWelcome;}
@@ -1102,6 +1131,7 @@ function editField(lf){
   else if(f==='c')ed=`<select>`+Object.keys(CATS[p.a][p.t]).map(c=>`<option${c===p.c?' selected':''}>${esc(c)}</option>`).join('')+`</select>`;
   else if(f==='s'){const subs=CATS[p.a][p.t][p.c]||[];ed=`<select><option value=""></option>`+subs.map(s=>`<option${s===p.s?' selected':''}>${esc(s)}</option>`).join('')+`</select>`;}
   else if(f==='n')ed=`<input type="text" value="${esc(p.n)}">`;
+  else if(f==='pay')ed=`<select><option value="C"${p.pay!=='D'?' selected':''}>Pix/Conta</option><option value="D"${p.pay==='D'?' selected':''}>Dinheiro</option></select>`;
   else ed=`<input type="text" inputmode="decimal" value="${String(p.v).replace('.',',')}">`;
   lf.querySelector('b').outerHTML='<b>'+ed+'</b>';
   const inp=lf.querySelector('input,select');inp.focus();try{if(inp.select)inp.select();}catch(e){}
@@ -1187,9 +1217,11 @@ async function chatSend(){
   const um=chatPush({type:'user',text:raw});
   if(looksLikeQuestion(raw)){if(renderQueryAnswer(raw)){um.personal=true;renderChat();}return;}
   const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Analisando…':'Analisando…'});
+  const hasPay=/(dinheiro|esp[ée]cie|\bpix\b|\bconta\b|cart[ãa]o|d[ée]bito|cr[ée]dito|dep[óo]sito)/i.test(raw);
   let items=null;
-  if(S.cfg.ai&&syncCfg()&&navigator.onLine){try{items=await aiParse(raw);}catch(e){}}
-  if(!items||!items.length)items=raw.split('\n').map(parseLine).filter(Boolean);
+  if(S.cfg.ai&&syncCfg()&&navigator.onLine&&!hasPay){try{items=await aiParse(raw);}catch(e){}}
+  if(!items||!items.length)items=raw.split('\n').flatMap(parseLineMulti).filter(Boolean);
+  items.forEach(p=>{if(!p.pay)p.pay='C';});
   chatRemove(st.id);
   if(!items||!items.length){chatPush({type:'bot',text:'Não entendi. Tente "dízimo Carlos 150", "mercado 120 hoje" ou pergunte "quanto gastei com lanches em maio?".'});return;}
   if(items.some(p=>p&&p.a==='P'))um.personal=true;
