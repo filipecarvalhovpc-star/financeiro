@@ -732,11 +732,11 @@ function confirmPrev(){
     if(ehDuplicado(p)&&!confirm('⚠️ Já existe um lançamento igual:\n"'+p.n+'" · '+fmt(p.v)+' · '+p.c+'\n\nLançar assim mesmo?')){msgs.push('Duplicado ignorado: '+p.n);return;}
     addTx(p);
     aprendeAlias(p);
-    if(p.pendRef){abatePendByName(p.pendRef,p.v);msgs.push('📌 Abatido em pendência: '+p.pendRef);}
+    if(p.pendRef){abatePendByName(p.pendRef,p.v,p.d);msgs.push('📌 Abatido em pendência: '+p.pendRef);}
     else if(p.t==='S'){
       const pend=findPendByName(p.n,p.a);
       if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+' dessa pendência?')){
-        pend.pago+=p.v;msgs.push('📌 Abatido em pendência: '+pend.desc);
+        pend.pago+=p.v;logPend(pend,p.v,p.d);msgs.push('📌 Abatido em pendência: '+pend.desc);
       }
     }
   });
@@ -974,10 +974,22 @@ function grupoBloco(list,a,t){
     const parts=[];if(din)parts.push('💵 '+fmt(din));if(con)parts.push('🏦 '+fmt(con));
     return `<tr><td>${dBr(main.d)}</td><td>${esc(main.n)} <span class="hint">${parts.join(' · ')}</span></td><td class="num ${t==='E'?'pos':'neg'}"><b>${fmt(din+con)}</b></td><td class="no-print" style="white-space:nowrap"><button class="icon" title="Editar/mover" onclick="editTx('${main.id}')">✏️</button><button class="icon" title="Excluir os ${g.length}" onclick="delTx('${main.id}')">🗑️</button></td></tr>`;
   };
+  // Acumulador: nomes que se repetem em lançamentos diferentes viram "Acumulado" (clicável);
+  // dinheiro+pix da mesma frase continuam mesclados numa linha.
   const renderLinhas=(items)=>{
-    const groups={},order=[];
-    items.slice().sort((x,y)=>x.d.localeCompare(y.d)).forEach(x=>{const k=x.grp||(x.d+'§'+x.n+'§'+(x.s||''));if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(x);});
-    return order.map(k=>linhaGrp(groups[k])).join('');
+    const byName={},norder=[];
+    items.slice().sort((x,y)=>x.d.localeCompare(y.d)).forEach(x=>{const k=aliasNorm(x.n||'')||('#'+x.id);if(!byName[k]){byName[k]=[];norder.push(k);}byName[k].push(x);});
+    let out='';
+    norder.forEach(k=>{
+      const g=byName[k];
+      const launches={},lorder=[];
+      g.forEach(x=>{const lk=x.grp||('§'+x.id);if(!launches[lk]){launches[lk]=[];lorder.push(lk);}launches[lk].push(x);});
+      if(lorder.length<2){out+=linhaGrp(g);return;}
+      const gid='det-'+g[0].id,total=sum(g);
+      out+=`<tr class="dz-sum" onclick="toggleDz('${gid}',this)" style="cursor:pointer"><td><span class="dz-arrow hint">▸ Acumulado</span></td><td>${esc(g[0].n)} <span class="hint">${lorder.length} lançamentos</span></td><td class="num ${t==='E'?'pos':'neg'}"><b>${fmt(total)}</b></td><td class="no-print"></td></tr>`;
+      lorder.forEach(lk=>{out+=linhaGrp(launches[lk]).replace('<tr>','<tr class="'+gid+' dz-det" style="display:none">');});
+    });
+    return out;
   };
   let html='';
   Object.keys(CATS[a][t]).forEach(c=>{
@@ -986,8 +998,6 @@ function grupoBloco(list,a,t){
     html+=`<div class="grpcat"><div class="grpcat-h"><span>${esc(c)}</span><span class="num">${fmt(sum(items))}</span></div>`;
     if(a==='I'&&t==='S'&&c==='Custo Pastoral'){
       html+=custoPastoralHTML(items,linha);
-    }else if(a==='I'&&t==='E'&&c==='Dízimos'){
-      html+=`<table>${dizimosHTML(items,linha,t)}</table>`;
     }else if(subs.length){
       subs.forEach(s=>{const si=items.filter(x=>x.s===s);if(!si.length)return;
         html+=`<div class="grpsub"><span>${esc(s)}</span><span class="num">Sub-total ${fmt(sum(si))}</span></div><table>${renderLinhas(si)}</table>`;});
@@ -1477,8 +1487,8 @@ function confirmCard(id){
   addTx(p);
   if(!isResv){
     aprendeAlias(p);
-    if(p.pendRef)abatePendByName(p.pendRef,p.v);
-    else if(p.t==='S'){const pend=findPendByName(p.n,p.a);if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+'?'))pend.pago+=p.v;}
+    if(p.pendRef)abatePendByName(p.pendRef,p.v,p.d);
+    else if(p.t==='S'){const pend=findPendByName(p.n,p.a);if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+'?')){pend.pago+=p.v;logPend(pend,p.v,p.d);}}
   }
   save();
   m.state='done';renderChat();toast(isResv?'🏦 Reserva atualizada':'✅ Registrado');
@@ -1905,9 +1915,12 @@ function renderPend(){
     const tot=list.reduce((x,p)=>x+Math.max(0,p.total-p.pago),0);
     return `<h3>${titulo} — em aberto: ${fmt(tot)}</h3>`+(list.length?
      `<div style="overflow-x:auto"><table><tr><th>Descrição</th><th class="num">Total</th><th class="num">Pago</th><th class="num">Restante</th><th></th></tr>`+
-     list.map(p=>{const r=Math.max(0,p.total-p.pago);
-      return `<tr${r<=0?' style="opacity:.55"':''}><td>${esc(p.desc)}</td><td class="num">${fmt(p.total)}</td><td class="num">${fmt(p.pago)}</td><td class="num ${r>0?'neg':'pos'}">${fmt(r)}</td>
-      <td class="no-print" style="white-space:nowrap"><button class="icon" title="Abater valor" onclick="abatePend('${p.id}')">✔</button><button class="icon" title="Excluir" onclick="delPend('${p.id}')">🗑️</button></td></tr>`;}).join('')+'</table></div>':'<p class="hint">Nenhuma pendência.</p>');
+     list.map(p=>{const r=Math.max(0,p.total-p.pago);const pays=p.pays||[];const gid='pp-'+p.id;
+      const pagoCell=pays.length?`<td class="num" style="cursor:pointer" title="Ver pagamentos" onclick="togglePend('${gid}',this)"><span class="pp-arrow" style="color:var(--gold)">▸</span> ${fmt(p.pago)}</td>`:`<td class="num">${fmt(p.pago)}</td>`;
+      let row=`<tr${r<=0?' style="opacity:.55"':''}><td>${esc(p.desc)}</td><td class="num">${fmt(p.total)}</td>${pagoCell}<td class="num ${r>0?'neg':'pos'}">${fmt(r)}</td>
+      <td class="no-print" style="white-space:nowrap"><button class="icon" title="Abater valor" onclick="abatePend('${p.id}')">✔</button><button class="icon" title="Excluir" onclick="delPend('${p.id}')">🗑️</button></td></tr>`;
+      if(pays.length)row+=`<tr class="${gid}" style="display:none"><td colspan="5" style="padding:0"><table style="margin:0;background:rgba(255,255,255,.02)"><tr><th class="hint" style="padding-left:20px">Pagamentos</th><th class="num hint">Valor</th></tr>${pays.slice().sort((x,y)=>String(x.d).localeCompare(String(y.d))).map(pp=>`<tr><td class="hint" style="padding-left:20px">${dBr(pp.d)}</td><td class="num pos">${fmt(pp.v)}</td></tr>`).join('')}</table></td></tr>`;
+      return row;}).join('')+'</table></div>':'<p class="hint">Nenhuma pendência.</p>');
   };
   el.innerHTML=grp('I','⛪ Da Igreja')+grp('P','🏠 Pessoais');
 }
@@ -1931,18 +1944,25 @@ function addPendLines(){
   if(n){document.getElementById('pendIn').value='';save();}
   else alert('Escreva a descrição e o valor — ex.: cartão nubank 1.500');
 }
+function logPend(p,v,d){p.pays=p.pays||[];p.pays.push({d:d||new Date().toISOString().slice(0,10),v:v});}
+function togglePend(gid,el){
+  const rows=document.querySelectorAll('tr.'+gid);if(!rows.length)return;
+  const abrir=rows[0].style.display==='none';
+  rows.forEach(r=>r.style.display=abrir?'':'none');
+  const a=el.querySelector('.pp-arrow');if(a)a.textContent=abrir?'▾':'▸';
+}
 function abatePend(id){
   if(!requireEdit())return;
   pendGuard();
   const p=S.pend.find(x=>x.id===id);if(!p)return;
   const v=pv(prompt('Valor a abater de "'+p.desc+'"\n(restante '+fmt(Math.max(0,p.total-p.pago))+'):')||'');
-  if(v>0){p.pago+=v;save();}
+  if(v>0){p.pago+=v;logPend(p,v);save();}
 }
-function abatePendByName(nome,v){
+function abatePendByName(nome,v,d){
   pendGuard();
   const alvo=String(nome).toLowerCase();
   const p=S.pend.find(x=>(x.total-x.pago)>0&&x.desc.toLowerCase().includes(alvo))||S.pend.find(x=>x.desc.toLowerCase().includes(alvo));
-  if(p)p.pago+=v;
+  if(p){p.pago+=v;logPend(p,v,d);}
 }
 /* acha uma pendência ABERTA parecida com o nome do lançamento (mesma área) */
 function findPendByName(nome,area){
