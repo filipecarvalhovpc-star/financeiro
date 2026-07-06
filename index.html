@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v5.2 (abre no mês atual) -->
+<!-- AD Ágape Financeiro — v5.3 (movimentos em ordem cronológica exata) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -841,7 +841,7 @@ function renderMov(){
   let list=S.tx.filter(x=>(!fa||x.a===fa)&&(!ft||x.t===ft)&&(!fm||mk(x.d)===fm)&&(!fq||(x.n+' '+x.c+' '+x.s).toLowerCase().includes(fq)));
   const temP=list.some(x=>x.a==='P');
   if(!UNLOCKED)list=list.filter(x=>x.a!=='P');
-  list.sort((a,b)=>b.d.localeCompare(a.d));
+  list.sort((a,b)=>b.d.localeCompare(a.d)||String(b.id).localeCompare(String(a.id)));
   document.getElementById('f-count').textContent=list.length+' lançamento(s) · Entradas '+fmt(sum(list.filter(x=>x.t==='E')))+' · Saídas '+fmt(sum(list.filter(x=>x.t==='S')))+((!UNLOCKED&&temP)?' · 🔒 lançamentos pessoais ocultos (clique no cadeado 🏠 no topo)':'');
   const trOne=x=>`<tr>
     <td>${dBr(x.d)}</td>
@@ -868,7 +868,7 @@ function renderMov(){
   </tr>`;
   };
   const groups={},order=[];
-  list.forEach(x=>{const k=x.grp||(x.d+'§'+x.a+'§'+x.t+'§'+x.c+'§'+(x.s||'')+'§'+x.n);if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(x);});
+  list.forEach(x=>{const k=x.grp||('#'+x.id);if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(x);});
   document.getElementById('movtable').innerHTML='<tr><th>Data</th><th>Área</th><th></th><th>Categoria</th><th>Descrição</th><th class="num">Valor</th><th></th></tr>'+
    order.slice(0,400).map(k=>trGrp(groups[k])).join('')+(order.length>400?'<tr><td colspan="7" class="hint">Mostrando 400 de '+order.length+'…</td></tr>':'');
 }
