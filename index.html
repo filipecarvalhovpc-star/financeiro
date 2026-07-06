@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v6.4 (placeholder do chat + trava voltar/avançar em tabelas roláveis) -->
+<!-- AD Ágape Financeiro — v6.5 (salário/repasse automático segue o método do gasto: dinheiro↔dinheiro) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -798,11 +798,11 @@ function addTx(p){
   if(p.gid)tx.grp=p.gid;                     // lançamentos irmãos (dinheiro+pix da mesma frase)
   S.tx.push(tx);
   if(S.cfg.mirror&&p.a==='I'&&p.t==='S'&&p.c==='Custo Pastoral'&&!p.au){
-    S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,pay:'C',lk:tx.id});
+    S.tx.push({id:uid(),d:p.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:p.n,v:p.v,pay:p.pay||'C',lk:tx.id});
   }
   if(p.rsv)commitResv(p,tx.id);           // efeito na reserva vinculado a este lançamento
   // gastos pessoais geram o salário pago pela igreja (faixas) — excluídas as entradas e os marcados "SD"
-  if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S'&&p.c!=='Reserva'&&!semSalario)autoSalario(p.v,p.d,tx.id);
+  if(S.cfg.autoSal!==false&&p.a==='P'&&p.t==='S'&&p.c!=='Reserva'&&!semSalario)autoSalario(p.v,p.d,tx.id,p.pay);
 }
 /* Efetiva o movimento de reserva: (1) lançamento na categoria 'Reserva' do caixa da área,
    (2) entrada no livro-razão S.resv. Vinculado ao lançamento base (baseId) p/ excluir junto. */
@@ -836,12 +836,13 @@ function delResvEntry(id){
    e (2) entrada pessoal como Repasse, seguindo as faixas mensais:
    Pr. Filipe até 1.700 → Pra. Anna até 3.400 → Missionários 1/2/3 até 3.700/4.000/4.300.
    Acima disso, só se o caixa pessoal ficar negativo: "Bônus extra de salário pastoral". */
-function parSal(nome,sub,v,d,lk){
+function parSal(nome,sub,v,d,lk,pay){
   v=Math.round(v*100)/100;if(v<=0)return;
-  S.tx.push({id:uid(),d,a:'I',t:'S',c:'Custo Pastoral',s:sub,n:nome,v,au:1,lk});
-  S.tx.push({id:uid(),d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:nome,v,au:1,lk});
+  pay=pay||'C';
+  S.tx.push({id:uid(),d,a:'I',t:'S',c:'Custo Pastoral',s:sub,n:nome,v,au:1,lk,pay});
+  S.tx.push({id:uid(),d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:nome,v,au:1,lk,pay});
 }
-function autoSalario(valor,d,lk){
+function autoSalario(valor,d,lk,pay){
   const m=mk(d);
   const usado=sum(S.tx.filter(x=>x.au&&x.a==='I'&&mk(x.d)===m&&x.n!=='Bônus extra de salário pastoral'));
   const FAIXAS=[
@@ -855,12 +856,12 @@ function autoSalario(valor,d,lk){
     if(rest<=0)break;
     if(pos>=f[2])continue;
     const usa=Math.min(rest,f[2]-pos);
-    parSal(f[0],f[1],usa,d,lk);
+    parSal(f[0],f[1],usa,d,lk,pay);
     pos+=usa;rest-=usa;
   }
   // além das faixas: bônus só até zerar o caixa pessoal do mês (entradas externas contam antes)
   const saldoP=saldoTotal('P',mk(d));
-  if(saldoP<-0.004)parSal('Bônus extra de salário pastoral','',-saldoP,d,lk);
+  if(saldoP<-0.004)parSal('Bônus extra de salário pastoral','',-saldoP,d,lk,pay);
 }
 
 /*==== MOVIMENTOS ====*/
