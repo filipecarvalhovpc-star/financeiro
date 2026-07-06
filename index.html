@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v6.6.1 (correção via IA + fallback orientado) -->
+<!-- AD Ágape Financeiro — v6.6.2 (microfone sempre visível + ditado do teclado no iPhone) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -1617,7 +1617,13 @@ async function applyCorrection(raw){
 function setupVoice(){
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   var mic=document.getElementById('micBtn');if(!mic)return;
-  if(!SR){mic.style.display='none';return;}
+  var qin0=document.getElementById('qin');
+  if(!SR){
+    // Sem API de voz no navegador (comum no app do iPhone): abre o teclado para o ditado nativo do iOS/Android.
+    mic.title='Ditar pelo teclado';
+    mic.addEventListener('click',function(){try{qin0&&qin0.focus();}catch(e){}toast('Toque no microfone do teclado para ditar');});
+    return;
+  }
   var rec=null,recording=false;
   function stopRec(){recording=false;mic.classList.remove('rec');try{rec&&rec.stop();}catch(e){}}
   mic.addEventListener('click',function(){
