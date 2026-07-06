@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v6.6 (rolagem do card no PC + correção por conversa + ditado por voz) -->
+<!-- AD Ágape Financeiro — v6.6.1 (correção via IA + fallback orientado) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -1597,17 +1597,22 @@ function hasPendingCard(){return CHAT.some(m=>m.type==='card'&&m.state!=='done')
 function isCorrection(t){return /(^|\s)(na verdade|corrig|corrige|refa[çc]|refaz|est[áa] errad|s[ãa]o (dois|duas|tr[êe]s|quatro|cinco|\d+)|separ|junt[ae]|troc[ao]|ajust|n[ãa]o [ée] (isso|assim|bem assim)|mude|muda o|muda a|troca a|troca o)/i.test(t);}
 async function applyCorrection(raw){
   CHAT.filter(m=>m.type==='card'&&m.state!=='done').forEach(m=>chatRemove(m.id));
-  const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Corrigindo…':'Corrigindo…'});
-  const combined=LAST_LAUNCH_RAW+'\n(instrução de correção do usuário, refaça os lançamentos considerando isto: '+raw+')';
+  const aiOn=S.cfg.ai&&syncCfg()&&navigator.onLine;
+  const st=chatPush({type:'status',text:aiOn?'🤖 Corrigindo…':'Corrigindo…'});
   let items=null;
-  if(S.cfg.ai&&syncCfg()&&navigator.onLine){try{items=await aiParse(combined);}catch(e){}}
-  if(!items||!items.length)items=combined.split('\n').flatMap(parseLineMulti).filter(Boolean);
-  items.forEach(p=>{if(!p.pay)p.pay='C';});
+  if(aiOn){const combined=LAST_LAUNCH_RAW+'\n(instrução de correção do usuário, refaça os lançamentos considerando isto: '+raw+')';try{items=await aiParse(combined);}catch(e){}}
   chatRemove(st.id);
-  if(!items||!items.length){chatPush({type:'bot',text:'Não consegui aplicar a correção. Descreva de outro jeito, ou refaça o lançamento do zero.'});return;}
-  if(items.some(p=>p&&p.a==='P')){const um2=CHAT.slice().reverse().find(m=>m.type==='user');if(um2)um2.personal=true;}
-  LAST_LAUNCH_RAW=combined;
-  pushLancCards(items);
+  if(items&&items.length){
+    items.forEach(p=>{if(!p.pay)p.pay='C';});
+    if(items.some(p=>p&&p.a==='P')){const um2=CHAT.slice().reverse().find(m=>m.type==='user');if(um2)um2.personal=true;}
+    LAST_LAUNCH_RAW=LAST_LAUNCH_RAW+' | '+raw;
+    pushLancCards(items);return;
+  }
+  // sem IA (ou IA indisponível): refaz o original e orienta
+  let orig=LAST_LAUNCH_RAW.split('\n').flatMap(parseLineMulti).filter(Boolean);
+  orig.forEach(p=>{if(!p.pay)p.pay='C';});
+  if(orig.length){if(orig.some(p=>p&&p.a==='P')){const um3=CHAT.slice().reverse().find(m=>m.type==='user');if(um3)um3.personal=true;}pushLancCards(orig);}
+  chatPush({type:'bot',text:'Para eu entender correções conversando (ex.: "são dois lançamentos diferentes"), ligue o <b>Modo IA</b> na aba Dados. Enquanto isso, toque em qualquer campo do card acima para ajustar manualmente.'});
 }
 function setupVoice(){
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
