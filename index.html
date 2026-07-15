@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v6.9 (correção: no PC o card de confirmação não corta mais; feed rola e mostra tudo) -->
+<!-- AD Ágape Financeiro — v7.0 (comando "abater repasse com saldo pessoal": usa saldo próprio para reduzir o salário já repassado pela igreja) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -881,6 +881,61 @@ function autoSalario(valor,d,lk,pay){
   if(rest>0.004)parSal('Bônus extra de salário pastoral','',rest,d,lk,pay);
 }
 
+/*==== ABATER REPASSE COM SALDO PESSOAL (caso inverso) ====
+   Quando a igreja já repassou salário no mês e SÓ DEPOIS entra dinheiro próprio no pessoal
+   (benefício social, oferta especial etc.), o pastor pode mandar um comando para USAR esse
+   saldo e REDUZIR retroativamente o repasse já feito. Ex.: "use 300 do saldo pessoal para
+   abater o pró-labore", "reduz o repasse da igreja em 300", "abate 300 do salário pastoral",
+   "tira 150 da ajuda de custo com meu saldo". Reduz o par Custo Pastoral (igreja) + Repasse
+   (pessoal) do mês, do maior tier para o menor, por exclusão+recriação (seguro p/ sync).
+   Resultado: repasse cai, caixa da igreja sobe e o saldo próprio cobre a diferença — tudo
+   fechado (lançamentos, custo pastoral, despesa da igreja e repasse ficam coerentes). */
+function parseAbate(raw){
+  const t=String(raw||'').toLowerCase();
+  if(/pend[êe]ncia/.test(t))return null;                        // não confundir com abater pendência
+  if(!/repasse|pr[óo]\s*-?\s*labore|sal[áa]ri|ajuda de custo|custo pastoral/.test(t))return null;
+  const reduz=/\b(abat\w*|reduz\w*|diminu\w*|descont\w*|estorn\w*|devolv\w*|tir\w*|us[ae]\w*)\b/.test(t);
+  if(!reduz)return null;                                         // precisa de um verbo de redução/uso
+  const nums=[...t.matchAll(/\d+(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?/g)];
+  if(!nums.length)return null;
+  const v=pv(nums[nums.length-1][0]);if(!(v>0))return null;
+  const tipo=/ajuda de custo|mission/.test(t)?'ajuda':'pro';    // padrão: pró-labore (Filipe/Anna)
+  return {v,tipo};
+}
+function abaterRepasse(v,tipo){
+  const m=nowMes();
+  const sub=tipo==='ajuda'?'Missionários':'Pró-labore';
+  const rankOf=n=>{const i=CUSTO_TIERS.findIndex(z=>z.n===n);return i<0?99:i;};
+  const custos=S.tx.filter(x=>x.au&&x.a==='I'&&x.t==='S'&&x.c==='Custo Pastoral'&&x.s===sub&&mk(x.d)===m)
+                   .sort((a,b)=>rankOf(b.n)-rankOf(a.n)||String(b.d).localeCompare(String(a.d))||String(b.id).localeCompare(String(a.id)));
+  const totalDisp=custos.reduce((s,x)=>s+x.v,0);
+  if(totalDisp<=0.004)return {ok:false,motivo:'Não há repasse de '+sub.toLowerCase()+' neste mês para abater.'};
+  const dispPessoal=Math.max(0,saldoTotal('P',m));
+  if(dispPessoal<=0.004)return {ok:false,motivo:'Não há saldo pessoal positivo para usar. Lance primeiro a entrada (benefício/oferta) no pessoal.'};
+  const alvo=Math.round(Math.min(v,totalDisp,dispPessoal)*100)/100;
+  const capado=alvo<Math.round(v*100)/100-0.004;
+  S.del=S.del||[];S.trash=S.trash||[];const stamp=Date.now();
+  const removeIds=new Set();const novos=[];let restante=alvo;
+  for(const c of custos){
+    if(restante<=0.004)break;
+    const rep=S.tx.find(x=>x.au&&x.a==='P'&&x.c==='Repasse Igreja'&&x.lk===c.lk&&x.n===c.n&&Math.abs(x.v-c.v)<0.005&&!removeIds.has(x.id));
+    if(!rep)continue;                                            // sem par correspondente: não mexe (mantém equilíbrio)
+    const corte=Math.min(restante,c.v);
+    const novo=Math.round((c.v-corte)*100)/100;
+    const grp=uid();
+    [c,rep].forEach(x=>{removeIds.add(x.id);S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:grp,_main:x===c}));});
+    if(novo>0.004){
+      novos.push({id:uid(),d:c.d,a:'I',t:'S',c:'Custo Pastoral',s:c.s,n:c.n,v:novo,au:1,lk:c.lk,pay:c.pay||'C'});
+      novos.push({id:uid(),d:rep.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:rep.n,v:novo,au:1,lk:rep.lk,pay:rep.pay||'C'});
+    }
+    restante-=corte;
+  }
+  const abatido=Math.round((alvo-restante)*100)/100;
+  S.tx=S.tx.filter(x=>!removeIds.has(x.id)).concat(novos);
+  save();
+  return {ok:true,abatido,sub,capado,pedido:Math.round(v*100)/100};
+}
+
 /*==== MOVIMENTOS ====*/
 function renderMov(){
   const fa=document.getElementById('f-area').value,ft=document.getElementById('f-t').value,
@@ -1443,7 +1498,7 @@ function scrollChat(){const f=document.getElementById('chatFeed');if(!f)return;c
   // No celular o chat rola a página inteira: leva o fim da conversa à vista.
   try{if(window.matchMedia&&window.matchMedia('(max-width:640px)').matches)requestAnimationFrame(()=>window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}));}catch(e){}}
 function chatStatus(id,text){const m=CHAT.find(x=>x.id===id);if(m){m.text=text;const el=document.querySelector('.msg-status[data-sid="'+id+'"]');if(el)el.textContent=stripEmoji(text);}}
-const chatWelcome='<div class="bubble bot">'+ic('wave',16)+' Escreva um lançamento — pode ser solto. Ex.: <b>dízimo Carlos 150</b>, <b>paguei 65 no mercado ontem</b>. Anexe/cole um recibo pelo ＋. Você também pode perguntar, ex.: <b>quanto gastei com lanches em maio?</b></div>';
+const chatWelcome='<div class="bubble bot">'+ic('wave',16)+' Escreva um lançamento — pode ser solto. Ex.: <b>dízimo Carlos 150</b>, <b>paguei 65 no mercado ontem</b>. Anexe/cole um recibo pelo ＋. Você também pode perguntar, ex.: <b>quanto gastei com lanches em maio?</b><br>Recebeu algo próprio (benefício/oferta) e quer que a igreja repasse menos? Ex.: <b>use 300 do saldo pessoal para abater o pró-labore</b>.</div>';
 function maybeBlur(inner,personal){
   if(personal&&!UNLOCKED)return `<div class="blurred" data-unlock="1">${inner}<div class="blur-hint">${ic('lock',14)} Toque e informe a senha pessoal</div></div>`;
   return inner;
@@ -1692,6 +1747,18 @@ async function chatSend(){
   if(!raw)return;
   qel.value='';
   const um=chatPush({type:'user',text:raw});
+  // Caso inverso: usar saldo próprio do pessoal para reduzir o repasse já feito pela igreja
+  const _ab=parseAbate(raw);
+  if(_ab){
+    um.personal=true;
+    const _r=abaterRepasse(_ab.v,_ab.tipo);
+    if(_r.ok){
+      let _msg='✅ Abatido '+fmt(_r.abatido)+' do repasse de '+_r.sub+'. A igreja repassou esse valor a menos e seu saldo pessoal cobriu a diferença.';
+      if(_r.capado)_msg+='<br><span class="hint">Você pediu '+fmt(_r.pedido)+', mas só havia '+fmt(_r.abatido)+' disponível (limitado pelo seu saldo pessoal ou pelo repasse do mês).</span>';
+      chatPush({type:'bot',html:_msg,personal:true});
+    }else chatPush({type:'bot',text:_r.motivo});
+    renderChat();return;
+  }
   if(hasPendingCard()&&isCorrection(raw)&&LAST_LAUNCH_RAW){await applyCorrection(raw);return;}
   if(looksLikeQuestion(raw)){if(renderQueryAnswer(raw)){um.personal=true;renderChat();}return;}
   const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Analisando…':'Analisando…'});
