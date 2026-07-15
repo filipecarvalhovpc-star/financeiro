@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.0 (comando "abater repasse com saldo pessoal": usa saldo próprio para reduzir o salário já repassado pela igreja) -->
+<!-- AD Ágape Financeiro — v7.1 (parser: reconhece a forma de pagamento avulsa, ex.: "13,80 padaria dinheiro" = pago em dinheiro, sem sujar o nome) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -748,7 +748,25 @@ function parseLineMulti(line){
     if(n)n=n.charAt(0).toUpperCase()+n.slice(1);else n=base.c;
     return segs.map(s=>Object.assign({},base,{v:s.v,pay:s.pay,n}));
   }
-  base.pay='C';
+  // Pagamento único informado por palavra avulsa, mesmo longe do valor:
+  // "13,80 padaria dinheiro", "padaria 13 no pix", "mercado 50 no cartão".
+  // "conta"/"banco" só contam como pagamento com preposição (em/na conta), para
+  // não confundir com descrições como "conta de luz".
+  const PAYW=[
+    [/\b(?:em\s+|no\s+|na\s+|via\s+|pelo\s+|pela\s+|de\s+)?(?:dinheiro|esp[ée]cie|vivo)\b/i,'D'],
+    [/\bem\s+m[ãa]os\b/i,'D'],
+    [/\b(?:no\s+|via\s+)?pix\b/i,'C'],
+    [/\b(?:no\s+|na\s+|em\s+|via\s+|pelo\s+|pela\s+)?(?:cart[ãa]o|d[ée]bito|cr[ée]dito|dep[óo]sito|transfer\w*)\b/i,'C'],
+    [/\b(?:em|na)\s+conta\b/i,'C'],
+    [/\b(?:no|via)\s+banco\b/i,'C']
+  ];
+  let pay='C',hit=null;
+  for(const [rex,pv2] of PAYW){ if(rex.test(line)){ pay=pv2; hit=rex; break; } }
+  base.pay=pay;
+  if(hit){                                   // tira a forma de pagamento do nome do gasto
+    base.n=String(base.n||'').replace(hit,' ').replace(/\s{2,}/g,' ').replace(/^[\s\-–,.:e]+|[\s\-–,.:e]+$/gi,'').trim();
+    base.n=base.n?base.n.charAt(0).toUpperCase()+base.n.slice(1):base.c;
+  }
   return [base];
 }
 
