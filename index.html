@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.1 (parser: reconhece a forma de pagamento avulsa, ex.: "13,80 padaria dinheiro" = pago em dinheiro, sem sujar o nome) -->
+<!-- AD Ágape Financeiro — v7.2 (editar um gasto pessoal recalcula na hora salário/repasse/custo pastoral — caixa fecha sozinho) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -1445,7 +1445,30 @@ function saveEdit(){
   x.c=g('e-c').value;x.s=g('e-s').value||'';x.n=g('e-n').value;x.v=pv(g('e-v').value);x.pay=g('e-pay').value;
   // mantém os irmãos (dinheiro+pix) coerentes: campos compartilhados vão para todos; valor/forma são de cada um
   if(x.grp)S.tx.filter(y=>y.grp===x.grp&&y.id!==x.id).forEach(y=>{y.d=x.d;y.a=x.a;y.t=x.t;y.c=x.c;y.s=x.s;y.n=x.n;});
+  recalcAutoSal(x);   // ao editar um gasto pessoal, refaz salário/repasse/custo pastoral (tudo fechado)
   closeModal();save();
+}
+/* Ao EDITAR um gasto pessoal, refaz o par automático (Custo Pastoral + Repasse) conforme o
+   novo valor — assim lançamento, repasse, despesa da igreja e caixa pessoal ficam fechados
+   na hora, sem ajuste manual. Se o gasto deixou de ser pessoal (mudou de área/tipo/virou
+   Reserva), o par antigo é removido e nada novo é gerado. Cobre gastos irmãos (dinheiro+pix). */
+function removeAuPair(baseId){
+  const linked=S.tx.filter(t=>t.au&&t.lk===baseId);if(!linked.length)return;
+  S.del=S.del||[];S.trash=S.trash||[];const stamp=Date.now(),grp=uid();
+  linked.forEach(t=>{S.del.push(t.id);S.trash.push(Object.assign({},t,{_del:stamp,_grp:grp}));});
+  const ids=new Set(linked.map(t=>t.id));
+  S.tx=S.tx.filter(t=>!ids.has(t.id));
+}
+function recalcAutoSal(x){
+  if(S.cfg.autoSal===false||x.au)return;                 // recurso desligado, ou editando um lançamento gerado
+  const bases=x.grp?S.tx.filter(t=>t.grp===x.grp&&!t.au):[x];
+  bases.forEach(b=>{
+    removeAuPair(b.id);                                   // remove o par antigo deste gasto
+    if(b.a==='P'&&b.t==='S'&&b.c!=='Reserva'){
+      const semSal=/(^|[\s\-–—,.:(])SD([\s\-–—,.:)]|$)/i.test(' '+(b.n||'')+' ');
+      if(!semSal)autoSalario(b.v,b.d,b.id,b.pay);         // regenera conforme o novo valor
+    }
+  });
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');EDIT_ID=null;}
 
