@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.7 (chat entende "a abater das pendências" sem precisar do nome; instrução não suja a descrição; apelidos inteligentes valem no texto digitado) -->
+<!-- AD Ágape Financeiro — v7.8 (IA é sempre a primeira leitora quando online, regras só offline · chat entende "a abater das pendências" sem nome · apelidos valem no texto digitado) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -764,6 +764,15 @@ function parseReserva(line){
   // depósito: por padrão SÓ acrescenta na reserva; só debita o caixa se disser "do saldo/caixa"
   const base=parseLine(line);if(!base||!base.v)return null;
   return [{d:base.d,a:r,t:'S',c:'Reserva',s:'',n:'Depósito — '+RESV_NAME[r],v:base.v,pay,rsvOnly:true,rsv:{dir:'dep',r,v:base.v,caixa:mexeCaixa}}];
+}
+/* Detecta pedido de abate de pendência em qualquer frase (com ou sem o nome).
+   Usado tanto pelas regras locais quanto para complementar a resposta da IA. */
+function detectaPendRef(t){
+  const pm=t.match(/\b(?:ref(?:erente)?\.?\s*)?(?:[aà]o?\s+)?pend[êe]ncia\s+(.{2,40})$/i);
+  if(pm)return pm[1].trim();
+  const pm2=t.match(/\b(?:a\s+|pra\s+|para\s+|e\s+)?(?:abat\w*|quit\w*|dar\s+baixa|baixar)\s+(?:d?[oa]s?\s+|n[oa]s?\s+|em\s+|as?\s+)?pend[êe]ncias?\b\s*(.{0,40})$/i);
+  if(pm2)return (pm2[1]||'').trim()||'*';
+  return null;
 }
 function parseLineMulti(line){
   const rsv=parseReserva(line);if(rsv)return rsv;
@@ -1984,9 +1993,23 @@ async function chatSend(){
   if(hasPendingCard()&&isCorrection(raw)&&LAST_LAUNCH_RAW){await applyCorrection(raw);return;}
   if(looksLikeQuestion(raw)){if(renderQueryAnswer(raw)){um.personal=true;renderChat();}return;}
   const st=chatPush({type:'status',text:(S.cfg.ai&&syncCfg()&&navigator.onLine)?'🤖 Analisando…':'Analisando…'});
-  const hasPay=/(dinheiro|esp[ée]cie|\bpix\b|\bconta\b|cart[ãa]o|d[ée]bito|cr[ée]dito|dep[óo]sito|reserva)/i.test(raw);
   let items=null;
-  if(S.cfg.ai&&syncCfg()&&navigator.onLine&&!hasPay){try{items=await aiParse(raw);}catch(e){}}
+  // A IA é SEMPRE a primeira leitora quando online (Modo IA ligado); as regras locais
+  // entram somente offline ou se a IA falhar. Exceção: movimentos de reserva, que têm
+  // efeitos próprios no razão e são tratados pelas regras.
+  const ehReserva=/\breserva\b/i.test(raw);
+  if(S.cfg.ai&&syncCfg()&&navigator.onLine&&!ehReserva){try{items=await aiParse(raw);}catch(e){}}
+  if(items&&items.length){
+    // a IA herda as inteligências locais: abate de pendência, apelidos e forma de pagamento
+    const pd=detectaPendRef(raw);
+    const payD=/\b(?:em\s+|no\s+)?(?:dinheiro|esp[ée]cie|vivo)\b|\bem\s+m[ãa]os\b/i.test(raw);
+    items.forEach(p=>{
+      if(pd&&!p.pendRef)p.pendRef=pd;
+      try{p.src=p.src||p.n;aplicaAlias(p,raw+' '+(p.n||''));}catch(e){}
+      if(!p.pay&&payD)p.pay='D';
+      if(p.n)p.n=String(p.n).replace(/[\s,;.:\-–—]*\b(?:a|pra|para|e)?\s*(?:abat\w*|quit\w*|dar\s+baixa|baixar)\s+(?:d?[oa]s?\s+|n[oa]s?\s+|em\s+|as?\s+)?pend[êe]ncias?\b.*$/i,'').trim()||p.c;
+    });
+  }
   if(!items||!items.length)items=raw.split('\n').flatMap(parseLineMulti).filter(Boolean);
   items.forEach(p=>{if(!p.pay)p.pay='C';});
   chatRemove(st.id);
