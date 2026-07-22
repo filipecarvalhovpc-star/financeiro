@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.5 (conferidor de integridade automático + fim do "-R$ 0,00"; caixa físico conferido em 623,50) -->
+<!-- AD Ágape Financeiro — v7.6 (Compatibilidade: extrato diário de auditoria às 3h · espelho de todas as modificações · sincronização por carimbo de tempo (fim das divergências entre aparelhos) · abate recai na Pra. Anna e listas sempre fecham · Face ID só no iPhone) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -320,6 +320,11 @@ header .brand{height:40px;width:56px}
   </div>
   <div id="reservasBox"></div>
   <div id="conselheiro"></div>
+  <div class="card">
+    <h2><span class="mi" data-ic="file-check" data-ics="18"></span> Compatibilidade — extratos diários de auditoria</h2>
+    <p class="hint">Todo dia, na primeira abertura após as 3h00, o sistema grava aqui uma fotografia completa do estado (saldos em destaque, entradas, saídas, repasse, reservas, pendências) e as observações de ajustes do dia. Serve como comprovante: compare qualquer dia com o anterior para auditar mudanças.</p>
+    <div id="auditBox"></div>
+  </div>
 </section>
 
 <section class="page" id="pg-rel">
@@ -353,6 +358,11 @@ header .brand{height:40px;width:56px}
   <div class="card" id="chkCard">
     <h2><span class="mi" data-ic="file-check" data-ics="18"></span> Conferidor de integridade</h2>
     <div id="chkBody" class="hint">Verificando…</div>
+  </div>
+  <div class="card">
+    <h2><span class="mi" data-ic="clipboard" data-ics="18"></span> Espelho de modificações</h2>
+    <p class="hint">Registro automático de TODA alteração nos dados — feita aqui, no iPhone ou pela sincronização — com data e hora. Use para auditar qualquer mudança.</p>
+    <div id="logBox"></div>
   </div>
   <div class="card">
     <h2><span class="mi" data-ic="cloud-check" data-ics="18"></span> Sincronização automática (nuvem do Google)</h2>
@@ -543,7 +553,10 @@ function load(){
   return {cfg:{si:{I:477.08,P:0},mirror:true,theme:'light'},tx:[],comp:[],saved:null};
 }
 function save(fromUndo){
-  if(!fromUndo){const before=localStorage.getItem(KEY);if(before){HIST.push(before);if(HIST.length>40)HIST.shift();}}
+  let before=null;
+  if(!fromUndo){before=localStorage.getItem(KEY);if(before){HIST.push(before);if(HIST.length>40)HIST.shift();}}
+  S.tx.forEach(t=>{if(!t.ts)t.ts=Date.now();});           // carimbo de tempo por lançamento (sincronização justa)
+  if(before){try{logDiff(before);}catch(e){}}              // espelho: registra o que mudou
   S.saved=new Date().toISOString();
   try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){alert('Não foi possível salvar no navegador: '+e.message);}
   schedulePush();refresh();if(typeof updateUndoBtn==='function')updateUndoBtn();
@@ -609,6 +622,8 @@ function migraIni(){
   });
   S.cfg._iniMig=true;
 }
+/* Migração única dos carimbos de tempo: lançamentos antigos recebem ts=1 (empate → vale a nuvem). */
+function migraTs(){if(S.cfg._tsMig)return;S.tx.forEach(t=>{if(!t.ts)t.ts=1;});S.cfg._tsMig=1;}
 /* Reservas (Etapa 2): livro-razão S.resv[] {id,r:'I'|'P',dir:'in'|'out',v,pay,d,n,grp}.
    Cada movimento de reserva também gera um lançamento na categoria 'Reserva' do caixa da área. */
 const RESV_NAME={I:'Reserva da Igreja',P:'Reserva Pessoal',X:'Reserva Extra'};
@@ -926,6 +941,41 @@ function parseAbate(raw){
   const tipo=/ajuda de custo|mission/.test(t)?'ajuda':'pro';    // padrão: pró-labore (Filipe/Anna)
   return {v,tipo};
 }
+/* Reatribui os NOMES dos pares de pró-labore do mês em ordem cronológica: Pr. Filipe até
+   completar 1.700, depois Pra. Anna, e assim por diante — valores, datas e formas de
+   pagamento intactos. Garante que a lista de cada pessoa SEMPRE feche com o total dela e
+   que abatimentos recaiam no fim da fila (Anna), preservando a sequência de preenchimento. */
+function redistribuirNomesPares(){
+  const m=nowMes(), r2=x=>Math.round(x*100)/100;
+  const NOMES=CUSTO_TIERS.map(t=>t.n), CAPS=[1700,3400,3700,4000,4300];
+  const custos=S.tx.filter(x=>x.au&&x.a==='I'&&x.t==='S'&&x.c==='Custo Pastoral'&&x.s==='Pró-labore'&&mk(x.d)===m)
+                   .sort((a,b)=>a.d.localeCompare(b.d)||String(a.id).localeCompare(String(b.id)));
+  const usados=new Set();let cum=0;
+  S.del=S.del||[];S.trash=S.trash||[];const stamp=Date.now();
+  for(const c of custos){
+    const rep=S.tx.find(x=>x.au&&x.a==='P'&&x.c==='Repasse Igreja'&&x.lk===c.lk&&Math.abs(x.v-c.v)<0.005&&(x.pay||'C')===(c.pay||'C')&&!usados.has(x.id));
+    if(!rep){cum=r2(cum+c.v);continue;}
+    usados.add(rep.id);
+    const ini=cum, fim=r2(cum+c.v);
+    // segmentos deste par dentro das faixas
+    const segs=[];let a=ini;
+    for(let i=0;i<CAPS.length&&a<fim-0.004;i++){const teto=CAPS[i];if(a>=teto)continue;const b=Math.min(fim,teto);segs.push({n:NOMES[i],v:r2(b-a)});a=b;}
+    if(a<fim-0.004)segs.push({n:'Bônus extra de salário pastoral',v:r2(fim-a)});
+    if(segs.length===1){
+      if(c.n!==segs[0].n){c.n=segs[0].n;rep.n=segs[0].n;c.ts=stamp;rep.ts=stamp;}
+    }else{
+      // par atravessa o teto de uma faixa: divide em pares menores (com tombstones p/ sync)
+      [c,rep].forEach(x=>{S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:uid()}));});
+      S.tx=S.tx.filter(x=>x.id!==c.id&&x.id!==rep.id);
+      segs.forEach(sg=>{
+        const sub=sg.n.indexOf('Bônus')===0?'':'Pró-labore';
+        S.tx.push({id:uid(),d:c.d,a:'I',t:'S',c:'Custo Pastoral',s:sub,n:sg.n,v:sg.v,au:1,lk:c.lk,pay:c.pay||'C',ts:stamp});
+        S.tx.push({id:uid(),d:rep.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:sg.n,v:sg.v,au:1,lk:rep.lk,pay:rep.pay||'C',ts:stamp});
+      });
+    }
+    cum=fim;
+  }
+}
 function abaterRepasse(v,tipo){
   const m=nowMes(), r2=x=>Math.round(x*100)/100;
   const sub=tipo==='ajuda'?'Missionários':'Pró-labore';
@@ -963,6 +1013,7 @@ function abaterRepasse(v,tipo){
   const feitoC=reduzir('C', r2(Math.min(alvo,dispC)));
   const feitoD=reduzir('D', r2(Math.min(r2(alvo-feitoC),dispD)));
   S.tx=S.tx.filter(x=>!removeIds.has(x.id)).concat(novos);
+  redistribuirNomesPares();   // o desconto recai no fim da fila (Pra. Anna) e as listas fecham
   save();
   const abatido=r2(feitoC+feitoD);
   return {ok:true,abatido,sub,capado:abatido<pedido-0.004,pedido};
@@ -1000,6 +1051,77 @@ function renderCheck(){
   el.innerHTML=probs.length
     ?'<p style="color:var(--red);font-weight:700;margin:0 0 6px">'+ic('warning',15)+' '+probs.length+' problema(s) encontrado(s):</p>'+probs.map(p=>'<p style="margin:4px 0">• '+esc(p)+'</p>').join('')
     :'<p style="color:var(--green);font-weight:700;margin:0">'+ic('confirm',15)+' Tudo certo: pares casados, sem órfãos, caixa pessoal fechado. Última checagem: '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})+'</p>';
+}
+
+/*==== ESPELHO DE MODIFICAÇÕES (S.log) ====
+   Toda alteração de dados — feita por você, pelo assistente ou vinda da sincronização —
+   fica registrada aqui com data e hora. É o rastro para achar qualquer erro. */
+function logGuard(){S.log=S.log||[];}
+function logPush(m){logGuard();S.log.push({id:uid(),t:Date.now(),m:String(m).slice(0,300)});if(S.log.length>800)S.log=S.log.slice(-800);}
+function logDiff(prevStr){
+  try{
+    const P=JSON.parse(prevStr);const AR={I:'Igreja',P:'Pessoal'};
+    const pm={},nm={};(P.tx||[]).forEach(t=>pm[t.id]=t);(S.tx||[]).forEach(t=>nm[t.id]=t);
+    const msgs=[];
+    const desc=t=>AR[t.a]+' '+(t.t==='E'?'entrada':'saída')+' "'+(t.n||t.c)+'" '+fmt(t.v)+(t.pay==='D'?' (dinheiro)':' (conta)')+(t.au?' [auto]':'');
+    Object.keys(nm).forEach(id=>{if(!pm[id])msgs.push('+ '+desc(nm[id]));});
+    Object.keys(pm).forEach(id=>{if(!nm[id])msgs.push('− '+desc(pm[id]));});
+    Object.keys(nm).forEach(id=>{const a=pm[id],b=nm[id];if(!a)return;
+      ['v','d','a','t','c','s','n','pay'].forEach(k=>{if(String(a[k]??'')!==String(b[k]??''))msgs.push('✎ "'+(a.n||a.c)+'": '+k+' '+(k==='v'?fmt(a[k])+' → '+fmt(b[k]):(a[k]??'')+' → '+(b[k]??'')));});
+    });
+    const rvA=(P.resv||[]).length,rvB=(S.resv||[]).length;if(rvA!==rvB)msgs.push('Reservas: '+rvA+' → '+rvB+' movimentos');
+    const pdA=(P.pend||[]).length,pdB=(S.pend||[]).length;if(pdA!==pdB)msgs.push('Pendências: '+pdA+' → '+pdB);
+    if(msgs.length>10){const resto=msgs.length-10;msgs.length=10;msgs.push('… e mais '+resto+' alteração(ões)');}
+    msgs.forEach(logPush);
+  }catch(e){}
+}
+function renderLog(){
+  const el=document.getElementById('logBox');if(!el)return;logGuard();
+  const list=S.log.slice(-120).reverse();
+  el.innerHTML=list.length?'<div style="max-height:340px;overflow-y:auto"><table>'+list.map(e=>'<tr><td class="hint" style="white-space:nowrap">'+new Date(e.t).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</td><td>'+esc(e.m)+'</td></tr>').join('')+'</table></div>':'<p class="hint">Nenhuma modificação registrada ainda. A partir de agora, tudo fica gravado aqui.</p>';
+}
+
+/*==== COMPATIBILIDADE — EXTRATO DIÁRIO DE AUDITORIA (S.audit) ====
+   1x por dia (primeira abertura após as 3h00) grava a fotografia completa do estado. */
+function auditGuard(){S.audit=S.audit||[];}
+function snapshotDiario(){
+  auditGuard();
+  const agora=new Date();if(agora.getHours()<3)return;
+  const dia=agora.getFullYear()+'-'+String(agora.getMonth()+1).padStart(2,'0')+'-'+String(agora.getDate()).padStart(2,'0');
+  if(S.audit.some(a=>a.dia===dia))return;
+  const m=nowMes(),r2=v=>Math.round(v*100)/100;
+  const tot=(a,t)=>r2(sum(txOf(a,m,t)));
+  const rep=r2(sum(S.tx.filter(x=>x.au&&x.a==='P'&&x.c==='Repasse Igreja'&&mk(x.d)===m)));
+  pendGuard();resvGuard();logGuard();
+  const pend=a=>r2(S.pend.filter(p=>p.a===a).reduce((x,p)=>x+Math.max(0,p.total-p.pago),0));
+  const corte=Date.now()-26*3600*1000;
+  const obs=S.log.filter(e=>e.t>=corte).slice(-12).map(e=>e.m);
+  S.audit.push({id:uid(),dia,t:Date.now(),
+    ig:{D:r2(saldoDinheiro('I',m)),C:r2(saldoConta('I',m)),tot:r2(saldoTotal('I',m)),E:tot('I','E'),S:tot('I','S')},
+    pe:{D:r2(saldoDinheiro('P',m)),C:r2(saldoConta('P',m)),tot:r2(saldoTotal('P',m)),E:tot('P','E'),S:tot('P','S')},
+    rep,res:{I:r2(reservaTotal('I')),P:r2(reservaTotal('P')),X:r2(reservaTotal('X'))},
+    pend:{I:pend('I'),P:pend('P')},obs});
+  if(S.audit.length>90)S.audit=S.audit.slice(-90);
+  logPush('Extrato diário de auditoria gravado ('+dia+')');
+  save();
+}
+function renderAudit(){
+  const el=document.getElementById('auditBox');if(!el)return;auditGuard();
+  const list=S.audit.slice().sort((a,b)=>b.dia.localeCompare(a.dia)).slice(0,30);
+  if(!list.length){el.innerHTML='<p class="hint">O primeiro extrato será gravado na próxima abertura após as 3h00.</p>';return;}
+  el.innerHTML=list.map(a=>{
+    const hora=new Date(a.t).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    return `<details style="border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:8px 0">
+     <summary style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span>${ic('calendar',14)} <b>${dBr(a.dia)}</b> <span class="hint">gravado às ${hora}</span></span><span><b style="color:var(--gold)">⛪ ${fmt(a.ig.tot)}</b> · <b style="color:var(--amber)">🏠 ${fmt(a.pe.tot)}</b></span></summary>
+     <table style="margin-top:8px">
+      <tr><th></th><th class="num">Dinheiro</th><th class="num">Conta/Pix</th><th class="num">SALDO</th><th class="num">Entradas</th><th class="num">Saídas</th></tr>
+      <tr><td>Igreja</td><td class="num">${fmt(a.ig.D)}</td><td class="num">${fmt(a.ig.C)}</td><td class="num"><b>${fmt(a.ig.tot)}</b></td><td class="num pos">${fmt(a.ig.E)}</td><td class="num neg">${fmt(a.ig.S)}</td></tr>
+      <tr><td>Pessoal</td><td class="num">${fmt(a.pe.D)}</td><td class="num">${fmt(a.pe.C)}</td><td class="num"><b>${fmt(a.pe.tot)}</b></td><td class="num pos">${fmt(a.pe.E)}</td><td class="num neg">${fmt(a.pe.S)}</td></tr>
+     </table>
+     <p class="hint" style="margin:8px 0 2px">Repasse do mês: <b>${fmt(a.rep)}</b> · Reservas: ⛪ ${fmt(a.res.I)} · 🏠 ${fmt(a.res.P)} · Extra ${fmt(a.res.X)} · Pendências: ⛪ ${fmt(a.pend.I)} · 🏠 ${fmt(a.pend.P)}</p>
+     ${a.obs&&a.obs.length?'<p class="hint" style="margin:6px 0 2px"><b>Observações (últimas 24h):</b></p>'+a.obs.map(o=>'<p class="hint" style="margin:2px 0">• '+esc(o)+'</p>').join(''):''}
+    </details>`;
+  }).join('');
 }
 
 /*==== MOVIMENTOS ====*/
@@ -1491,8 +1613,9 @@ function saveEdit(){
   const g=i=>document.getElementById(i);
   x.d=g('e-d').value;x.a=g('e-area').value;x.t=g('e-t').value;
   x.c=g('e-c').value;x.s=g('e-s').value||'';x.n=g('e-n').value;x.v=pv(g('e-v').value);x.pay=g('e-pay').value;
+  x.ts=Date.now();   // edição mais recente vence na sincronização entre aparelhos
   // mantém os irmãos (dinheiro+pix) coerentes: campos compartilhados vão para todos; valor/forma são de cada um
-  if(x.grp)S.tx.filter(y=>y.grp===x.grp&&y.id!==x.id).forEach(y=>{y.d=x.d;y.a=x.a;y.t=x.t;y.c=x.c;y.s=x.s;y.n=x.n;});
+  if(x.grp)S.tx.filter(y=>y.grp===x.grp&&y.id!==x.id).forEach(y=>{y.d=x.d;y.a=x.a;y.t=x.t;y.c=x.c;y.s=x.s;y.n=x.n;y.ts=x.ts;});
   recalcAutoSal(x);   // ao editar um gasto pessoal, refaz salário/repasse/custo pastoral (tudo fechado)
   closeModal();save();
 }
@@ -2098,6 +2221,9 @@ async function bioUnlock(){
   }catch(e){return false;}
 }
 async function bioOffer(){
+  // O convite automático de biometria só aparece no iPhone/iPad. No notebook, quem quiser
+  // digitais (Windows Hello) ativa manualmente em Configurações → "Face ID neste aparelho".
+  if(!/iP(hone|ad|od)/.test(navigator.userAgent))return;
   if(!bioAvailable()||localStorage.getItem(BIOKEY))return;
   if(confirm('Ativar Face ID para entrar neste aparelho?')){
     alert(await bioRegister()?'Face ID ativado! Na próxima abertura, use o botão "Entrar com Face ID".':'Não foi possível ativar — você pode tentar de novo em Dados → Configurações.');
@@ -2145,8 +2271,10 @@ function snapSync(s){return JSON.stringify({tx:s.tx,pend:s.pend||[],comp:s.comp|
 function mergeStates(loc,rem){
   const del=new Set([...(loc.del||[]),...(rem.del||[])]);
   const j={};
+  /* Lançamento editado nos dois aparelhos: vence a versão com carimbo de tempo (ts) mais
+     novo; empate = vale a nuvem. Isso elimina divergências eternas entre iPhone e PC. */
   (rem.tx||[]).forEach(t=>{if(!del.has(t.id))j[t.id]=t;});
-  (loc.tx||[]).forEach(t=>{if(!del.has(t.id))j[t.id]=t;});
+  (loc.tx||[]).forEach(t=>{if(del.has(t.id))return;const c=j[t.id];if(!c||(t.ts||0)>(c.ts||0))j[t.id]=t;});
   const tx=Object.values(j).sort((a,b)=>String(a.d).localeCompare(String(b.d)));
   const pj={};
   (rem.pend||[]).forEach(p=>{if(!del.has(p.id))pj[p.id]=p;});
@@ -2167,8 +2295,13 @@ function mergeStates(loc,rem){
     if(newer.cfg.siD)cfg.siD=Object.assign({},loc.cfg.siD,newer.cfg.siD);
     if(newer.cfg.ini)cfg.ini=newer.cfg.ini;   // aberturas por mês (independentes) sincronizam
   }
+  // Espelho de modificações e extratos diários: união entre aparelhos (nada se perde)
+  const lg={};[...(rem.log||[]),...(loc.log||[])].forEach(e=>{if(e&&e.id)lg[e.id]=e;});
+  const log=Object.values(lg).sort((a,b)=>(a.t||0)-(b.t||0)).slice(-800);
+  const au={};[...(rem.audit||[]),...(loc.audit||[])].forEach(e=>{if(!e)return;const k=e.dia;if(!au[k]||(e.t||0)<(au[k].t||0))au[k]=e;});
+  const audit=Object.values(au).sort((a,b)=>String(a.dia).localeCompare(String(b.dia))).slice(-90);
   return {cfg,tx,pend:Object.values(pj),comp:Object.values(cj),resv:Object.values(rvj),
-    alias,del:[...del],saved:new Date().toISOString()};
+    alias,del:[...del],log,audit,saved:new Date().toISOString()};
 }
 async function cloudPull(silent){
   const c=syncCfg();if(!c)return;
@@ -2417,11 +2550,12 @@ function showNow(pg){
   document.querySelectorAll('section.page').forEach(s=>s.classList.toggle('on',s.id==='pg-'+pg));
   if(pg==='mov')renderMov();
   if(pg==='dashI')renderDash('I');
-  if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();const rb=document.getElementById('reservasBox');if(rb)rb.innerHTML=renderReservas();}
-  if(pg==='dados'){renderCheck();renderAliases();renderTrash();renderCatMgr();}
+  if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();const rb=document.getElementById('reservasBox');if(rb)rb.innerHTML=renderReservas();renderAudit();}
+  if(pg==='dados'){renderCheck();renderLog();renderAliases();renderTrash();renderCatMgr();}
 }
 function refresh(){
-  migraIni();
+  migraIni();migraTs();
+  try{snapshotDiario();}catch(e){}
   const sI=saldoTotal('I'),sP=saldoTotal('P');
   const cI=document.getElementById('chipI'),cP=document.getElementById('chipP');
   cI.innerHTML=ic('church',13)+' '+fmt(sI);cI.className='chip '+(sI>=0?'pos':'neg');
