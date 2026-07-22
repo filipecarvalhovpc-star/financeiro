@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.4 (abatimento blindado: reduz por forma de pagamento sem deixar dinheiro/conta negativos e sem arredondamento — acaba com valores "fantasmas") -->
+<!-- AD Ágape Financeiro — v7.5 (conferidor de integridade automático + fim do "-R$ 0,00"; caixa físico conferido em 623,50) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -350,6 +350,10 @@ header .brand{height:40px;width:56px}
 </section>
 
 <section class="page" id="pg-dados">
+  <div class="card" id="chkCard">
+    <h2><span class="mi" data-ic="file-check" data-ics="18"></span> Conferidor de integridade</h2>
+    <div id="chkBody" class="hint">Verificando…</div>
+  </div>
   <div class="card">
     <h2><span class="mi" data-ic="cloud-check" data-ics="18"></span> Sincronização automática (nuvem do Google)</h2>
     <p class="hint">Com a sincronização ativa, tudo o que você lançar em um aparelho aparece nos outros automaticamente. Os dados ficam num arquivo do <b>seu</b> Google Drive. Sem internet, o sistema salva no aparelho e sincroniza quando conectar.</p>
@@ -561,7 +565,7 @@ function toast(msg){
 }
 
 /*==== UTILS ====*/
-const fmt=v=>(v<0?'-':'')+'R$ '+Math.abs(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmt=v=>{v=Math.round(v*100)/100;if(Math.abs(v)<0.005)v=0;return (v<0?'-':'')+'R$ '+Math.abs(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});};
 const pv=s=>{if(typeof s==='number')return s;s=String(s).replace(/[R$\s]/g,'').replace(/\.(?=\d{3})/g,'').replace(',','.');const n=parseFloat(s);return isNaN(n)?0:n;};
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 /* ===== Biblioteca de ícones AD Ágape (currentColor) ===== */
@@ -962,6 +966,40 @@ function abaterRepasse(v,tipo){
   save();
   const abatido=r2(feitoC+feitoD);
   return {ok:true,abatido,sub,capado:abatido<pedido-0.004,pedido};
+}
+
+/*==== CONFERIDOR DE INTEGRIDADE ====
+   Roda sozinho ao abrir o app e fica na aba Dados. Garante que nenhum valor possa
+   "surgir do nada": todo par automático (Custo Pastoral ⇄ Repasse) precisa estar
+   casado no mesmo valor E na mesma forma de pagamento; nenhum lançamento automático
+   pode existir sem o gasto que o originou; e o caixa pessoal não pode ficar negativo
+   em nenhum método. Se algo quebrar, aparece aviso na hora — nada passa em silêncio. */
+function conferirIntegridade(){
+  const probs=[]; const r2=v=>Math.round(v*100)/100;
+  const meses=[...new Set(S.tx.filter(x=>x.au).map(x=>mk(x.d)))].sort();
+  // 1) pares casados por gasto (lk) e por forma de pagamento
+  const grupos={};
+  S.tx.filter(x=>x.au).forEach(x=>{const k=(x.lk||'?')+'|'+(x.pay||'C');(grupos[k]=grupos[k]||{I:0,P:0,d:x.d})[x.a==='I'?'I':'P']+=x.v;});
+  Object.keys(grupos).forEach(k=>{const g=grupos[k];
+    if(Math.abs(g.I-g.P)>0.005)probs.push('Par automático descasado em '+dBr(g.d)+': igreja '+fmt(g.I)+' × pessoal '+fmt(g.P)+' ('+(k.split('|')[1]==='D'?'dinheiro':'conta')+').');
+  });
+  // 2) automáticos órfãos (o gasto que os gerou não existe mais)
+  const ids=new Set(S.tx.map(x=>x.id));
+  S.tx.filter(x=>x.au&&x.lk&&!ids.has(x.lk)).forEach(x=>probs.push('Lançamento automático órfão: "'+x.n+'" '+fmt(x.v)+' em '+dBr(x.d)+' (o gasto de origem foi excluído).'));
+  // 3) caixa pessoal negativo por método, mês a mês
+  meses.forEach(mm=>{
+    const d=r2(saldoDinheiro('P',mm)),c=r2(saldoConta('P',mm));
+    if(d<-0.005)probs.push('Dinheiro pessoal negativo em '+mLabel(mm)+': '+fmt(d)+'.');
+    if(c<-0.005)probs.push('Conta pessoal negativa em '+mLabel(mm)+': '+fmt(c)+'.');
+  });
+  return probs;
+}
+function renderCheck(){
+  const el=document.getElementById('chkBody');if(!el)return;
+  const probs=conferirIntegridade();
+  el.innerHTML=probs.length
+    ?'<p style="color:var(--red);font-weight:700;margin:0 0 6px">'+ic('warning',15)+' '+probs.length+' problema(s) encontrado(s):</p>'+probs.map(p=>'<p style="margin:4px 0">• '+esc(p)+'</p>').join('')
+    :'<p style="color:var(--green);font-weight:700;margin:0">'+ic('confirm',15)+' Tudo certo: pares casados, sem órfãos, caixa pessoal fechado. Última checagem: '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})+'</p>';
 }
 
 /*==== MOVIMENTOS ====*/
@@ -2380,7 +2418,7 @@ function showNow(pg){
   if(pg==='mov')renderMov();
   if(pg==='dashI')renderDash('I');
   if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();const rb=document.getElementById('reservasBox');if(rb)rb.innerHTML=renderReservas();}
-  if(pg==='dados'){renderAliases();renderTrash();renderCatMgr();}
+  if(pg==='dados'){renderCheck();renderAliases();renderTrash();renderCatMgr();}
 }
 function refresh(){
   migraIni();
@@ -2652,6 +2690,8 @@ document.addEventListener('DOMContentLoaded',()=>{
       setTimeout(()=>location.reload(),1800);
     }};
   refresh();
+  // Conferidor: avisa na abertura se algo estiver descasado (e de novo após cada sincronização)
+  setTimeout(()=>{try{const p=conferirIntegridade();if(p.length)toast('⚠ Conferidor: '+p.length+' problema(s) — veja em Dados');}catch(e){}},2500);
 });
 </script>
 </body>
