@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.3 (reserva: "lance como entrada/receita" agora credita o caixa ao retirar da reserva) -->
+<!-- AD Ágape Financeiro — v7.4 (abatimento blindado: reduz por forma de pagamento sem deixar dinheiro/conta negativos e sem arredondamento — acaba com valores "fantasmas") -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -923,37 +923,45 @@ function parseAbate(raw){
   return {v,tipo};
 }
 function abaterRepasse(v,tipo){
-  const m=nowMes();
+  const m=nowMes(), r2=x=>Math.round(x*100)/100;
   const sub=tipo==='ajuda'?'Missionários':'Pró-labore';
+  const totalPro=S.tx.filter(x=>x.au&&x.a==='I'&&x.t==='S'&&x.c==='Custo Pastoral'&&x.s===sub&&mk(x.d)===m).reduce((s,x)=>s+x.v,0);
+  if(totalPro<=0.004)return {ok:false,motivo:'Não há repasse de '+sub.toLowerCase()+' neste mês para abater.'};
+  const dispTotal=Math.max(0,saldoTotal('P',m));
+  if(dispTotal<=0.004)return {ok:false,motivo:'Não há saldo pessoal positivo para usar. Lance primeiro a entrada (benefício/oferta) no pessoal.'};
+  const pedido=r2(v), alvo=r2(Math.min(v,totalPro,dispTotal));
+  // BLINDAGEM: reduz o repasse POR FORMA DE PAGAMENTO, só até onde cada método tem saldo
+  // pessoal positivo. Nunca deixa dinheiro ou conta negativo — evita valores "fantasmas".
+  // Consome primeiro a conta (onde normalmente está o benefício/oferta), depois o dinheiro.
+  const dispC=Math.max(0,saldoConta('P',m)), dispD=Math.max(0,saldoDinheiro('P',m));
   const rankOf=n=>{const i=CUSTO_TIERS.findIndex(z=>z.n===n);return i<0?99:i;};
-  const custos=S.tx.filter(x=>x.au&&x.a==='I'&&x.t==='S'&&x.c==='Custo Pastoral'&&x.s===sub&&mk(x.d)===m)
-                   .sort((a,b)=>rankOf(b.n)-rankOf(a.n)||String(b.d).localeCompare(String(a.d))||String(b.id).localeCompare(String(a.id)));
-  const totalDisp=custos.reduce((s,x)=>s+x.v,0);
-  if(totalDisp<=0.004)return {ok:false,motivo:'Não há repasse de '+sub.toLowerCase()+' neste mês para abater.'};
-  const dispPessoal=Math.max(0,saldoTotal('P',m));
-  if(dispPessoal<=0.004)return {ok:false,motivo:'Não há saldo pessoal positivo para usar. Lance primeiro a entrada (benefício/oferta) no pessoal.'};
-  const alvo=Math.round(Math.min(v,totalDisp,dispPessoal)*100)/100;
-  const capado=alvo<Math.round(v*100)/100-0.004;
   S.del=S.del||[];S.trash=S.trash||[];const stamp=Date.now();
-  const removeIds=new Set();const novos=[];let restante=alvo;
-  for(const c of custos){
-    if(restante<=0.004)break;
-    const rep=S.tx.find(x=>x.au&&x.a==='P'&&x.c==='Repasse Igreja'&&x.lk===c.lk&&x.n===c.n&&Math.abs(x.v-c.v)<0.005&&!removeIds.has(x.id));
-    if(!rep)continue;                                            // sem par correspondente: não mexe (mantém equilíbrio)
-    const corte=Math.min(restante,c.v);
-    const novo=Math.round((c.v-corte)*100)/100;
-    const grp=uid();
-    [c,rep].forEach(x=>{removeIds.add(x.id);S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:grp,_main:x===c}));});
-    if(novo>0.004){
-      novos.push({id:uid(),d:c.d,a:'I',t:'S',c:'Custo Pastoral',s:c.s,n:c.n,v:novo,au:1,lk:c.lk,pay:c.pay||'C'});
-      novos.push({id:uid(),d:rep.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:rep.n,v:novo,au:1,lk:rep.lk,pay:rep.pay||'C'});
+  const removeIds=new Set(), novos=[];
+  // reduz até 'quanto' do repasse do método 'pay' e devolve o quanto REALMENTE reduziu
+  function reduzir(pay,quanto){
+    let restante=r2(quanto); const inicial=restante; if(restante<=0.004)return 0;
+    const custos=S.tx.filter(x=>x.au&&x.a==='I'&&x.t==='S'&&x.c==='Custo Pastoral'&&x.s===sub&&(x.pay||'C')===pay&&mk(x.d)===m&&!removeIds.has(x.id))
+                     .sort((a,b)=>rankOf(b.n)-rankOf(a.n)||String(b.d).localeCompare(String(a.d))||String(b.id).localeCompare(String(a.id)));
+    for(const c of custos){
+      if(restante<=0.004)break;
+      const rep=S.tx.find(x=>x.au&&x.a==='P'&&x.c==='Repasse Igreja'&&x.lk===c.lk&&x.n===c.n&&Math.abs(x.v-c.v)<0.005&&(x.pay||'C')===pay&&!removeIds.has(x.id));
+      if(!rep)continue;                                          // sem par correspondente: não mexe (mantém equilíbrio)
+      const corte=r2(Math.min(restante,c.v)), novo=r2(c.v-corte), grp=uid();
+      [c,rep].forEach(x=>{removeIds.add(x.id);S.del.push(x.id);S.trash.push(Object.assign({},x,{_del:stamp,_grp:grp,_main:x===c}));});
+      if(novo>0.004){
+        novos.push({id:uid(),d:c.d,a:'I',t:'S',c:'Custo Pastoral',s:c.s,n:c.n,v:novo,au:1,lk:c.lk,pay});
+        novos.push({id:uid(),d:rep.d,a:'P',t:'E',c:'Repasse Igreja',s:'',n:rep.n,v:novo,au:1,lk:rep.lk,pay});
+      }
+      restante=r2(restante-corte);
     }
-    restante-=corte;
+    return r2(inicial-restante);
   }
-  const abatido=Math.round((alvo-restante)*100)/100;
+  const feitoC=reduzir('C', r2(Math.min(alvo,dispC)));
+  const feitoD=reduzir('D', r2(Math.min(r2(alvo-feitoC),dispD)));
   S.tx=S.tx.filter(x=>!removeIds.has(x.id)).concat(novos);
   save();
-  return {ok:true,abatido,sub,capado,pedido:Math.round(v*100)/100};
+  const abatido=r2(feitoC+feitoD);
+  return {ok:true,abatido,sub,capado:abatido<pedido-0.004,pedido};
 }
 
 /*==== MOVIMENTOS ====*/
