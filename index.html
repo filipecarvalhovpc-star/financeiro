@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.2 (editar um gasto pessoal recalcula na hora salário/repasse/custo pastoral — caixa fecha sozinho) -->
+<!-- AD Ágape Financeiro — v7.3 (reserva: "lance como entrada/receita" agora credita o caixa ao retirar da reserva) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -719,8 +719,10 @@ function parseReserva(line){
   if(!/reserva/i.test(line))return null;
   const r=reservaAlvo(line),dir=reservaDir(line);if(!r)return null;
   const pay=/\b(dinheiro|esp[ée]cie|vivo|m[ãa]os)\b/i.test(line)?'D':'C';
-  // só mexe no caixa quando o usuário mencionar explicitamente o saldo/caixa
-  const mexeCaixa=/\b(saldo|caixa)\b/i.test(line);
+  // Credita/debita o caixa quando o usuário pedir explicitamente: "saldo", "caixa",
+  // ou "lance/lançar como entrada/receita" (ex.: "retire 324 da reserva da igreja e
+  // lance como entrada na igreja" = tira da reserva E credita o caixa da igreja).
+  const mexeCaixa=/\b(saldo|caixa|entrada|receita)\b/i.test(line)||/lan[çc]\w*/i.test(line);
   if(dir==='from'){
     const rv=valorDaReserva(line);if(!rv)return null;
     // remove a cláusula da reserva e tenta ler a despesa que sobrou
