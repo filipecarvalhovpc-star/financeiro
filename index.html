@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.6 (Compatibilidade: extrato diário de auditoria às 3h · espelho de todas as modificações · sincronização por carimbo de tempo (fim das divergências entre aparelhos) · abate recai na Pra. Anna e listas sempre fecham · Face ID só no iPhone) -->
+<!-- AD Ágape Financeiro — v7.7 (chat entende "a abater das pendências" sem precisar do nome; instrução não suja a descrição; apelidos inteligentes valem no texto digitado) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -664,8 +664,14 @@ function parseLine(line){
   if(/^pessoal[:\s]/i.test(txt)){area='P';txt=txt.replace(/^pessoal[:\s]+/i,'');}
   // referência a pendência ("... pendência cartão")
   let pendRef=null;
+  // forma 1: "... pendência NOME"
   const pm=txt.match(/\b(?:ref(?:erente)?\.?\s*)?(?:[aà]o?\s+)?pend[êe]ncia\s+(.{2,40})$/i);
   if(pm){pendRef=pm[1].trim();txt=txt.slice(0,pm.index);}
+  // forma 2: "... a abater das pendências" (sem nome) → usa a própria descrição para achar a pendência
+  if(!pendRef){
+    const pm2=txt.match(/[\s,;.:\-–—]*\b(?:a\s+|pra\s+|para\s+|e\s+)?(?:abat\w*|quit\w*|dar\s+baixa|baixar)\s+(?:d?[oa]s?\s+|n[oa]s?\s+|em\s+|as?\s+)?pend[êe]ncias?\b\s*(.{0,40})$/i);
+    if(pm2){pendRef=(pm2[1]||'').trim()||'*';txt=txt.slice(0,pm2.index);}
+  }
   // data
   let d=new Date();let dstr=null;
   if(/\banteontem\b/i.test(txt)){d.setDate(d.getDate()-2);txt=txt.replace(/\banteontem\b/i,'');}
@@ -707,7 +713,8 @@ function parseLine(line){
   n=n.replace(/^((?:de|do|da|no|na|em|com|pra|para|pro|recebi|recebido|paguei|pagar|gastei|comprei|comprar|ganhei|ganhou)\s+)+/i,'').replace(/\s+(?:de|do|da|no|na|em|com|pra|para|pro)$/i,'').trim();
   // instruções ao app não entram na descrição: dica de alias, pedido de abater pendência, marcador "despesa pessoal"
   n=n.replace(/\s*[-–—(,;:]\s*\(?\s*(?:sempre|quando)\b[^)]*\)?\s*$/i,'')
-     .replace(/[\s,;.:\-–—]*\b(?:pra|para|e|favor|por favor)?\s*(?:abat[ea]r?|quit[ae]r?|dar\s+baixa|baixar)\s+(?:n[oa]s?\s+|em\s+|as\s+)?pend[êe]ncias?\b.*$/i,'')
+     .replace(/[\s,;.:\-–—]*\b(?:a|pra|para|e|favor|por favor)?\s*(?:abat\w*|quit\w*|dar\s+baixa|baixar)\s+(?:d?[oa]s?\s+|n[oa]s?\s+|em\s+|as?\s+)?pend[êe]ncias?\b.*$/i,'')
+     .replace(/[\s,;.:\-–—]*\b(?:a|pra|para|e)?\s*(?:abat\w*|quit\w*|dar\s+baixa|baixar)\s*(?:d?[oa]s?|n[oa]s?|em|as?)?\s*$/i,'')
      .replace(/[\s,;.:\-–—]*\b(?:despesa|gasto)\s+pessoal\b/i,'')
      .replace(/\s{2,}/g,' ').replace(/^[\s,;.:\-–—(]+|[\s,;.:\-–—]+$/g,'').trim();
   if(n)n=n.charAt(0).toUpperCase()+n.slice(1);
@@ -761,6 +768,9 @@ function parseReserva(line){
 function parseLineMulti(line){
   const rsv=parseReserva(line);if(rsv)return rsv;
   const base=parseLine(line);if(!base)return [];
+  // Apelidos inteligentes valem também no texto digitado do chat (não só em recibos):
+  // "pai d'água 200" vira Paid'Égua na área/categoria ensinada, por exemplo.
+  try{base.src=base.src||base.n;aplicaAlias(base,line);}catch(e){}
   const re=/(\d+(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:reais?|conto?s?|pila)?\s*(?:em|no|na|de|via|pelo|pela)?\s*(dinheiro|esp[ée]cie|m[ãa]os|vivo|pix|conta|cart[ãa]o|transfer\w*|d[ée]bito|cr[ée]dito|dep[óo]sito|banco)\b/gi;
   const segs=[];let m;
   while((m=re.exec(line)))segs.push({v:pv(m[1]),pay:(/dinheiro|esp[ée]cie|m[ãa]os|vivo/i.test(m[2])?'D':'C')});
@@ -826,7 +836,7 @@ function confirmPrev(){
     if(ehDuplicado(p)&&!confirm('Já existe um lançamento igual:\n"'+p.n+'" · '+fmt(p.v)+' · '+p.c+'\n\nLançar assim mesmo?')){msgs.push('Duplicado ignorado: '+p.n);return;}
     addTx(p);
     aprendeAlias(p);
-    if(p.pendRef){abatePendByName(p.pendRef,p.v,p.d);msgs.push('📌 Abatido em pendência: '+p.pendRef);}
+    if(p.pendRef){const alvoP=p.pendRef==='*'?p.n:p.pendRef;abatePendByName(alvoP,p.v,p.d);msgs.push('📌 Abatido em pendência: '+alvoP);}
     else if(p.t==='S'){
       const pend=findPendByName(p.n,p.a);
       if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+' dessa pendência?')){
@@ -1815,7 +1825,7 @@ function confirmCard(id){
   addTx(p);
   if(!isResv){
     aprendeAlias(p);
-    if(p.pendRef)abatePendByName(p.pendRef,p.v,p.d);
+    if(p.pendRef)abatePendByName(p.pendRef==='*'?p.n:p.pendRef,p.v,p.d);
     else if(p.t==='S'){const pend=findPendByName(p.n,p.a);if(pend&&confirm('Este lançamento parece ser da pendência "'+pend.desc+'" (restante '+fmt(Math.max(0,pend.total-pend.pago))+').\n\nAbater '+fmt(p.v)+'?')){pend.pago+=p.v;logPend(pend,p.v,p.d);}}
   }
   save();
@@ -2395,7 +2405,8 @@ function abatePend(id){
 function abatePendByName(nome,v,d){
   pendGuard();
   const alvo=String(nome).toLowerCase();
-  const p=S.pend.find(x=>(x.total-x.pago)>0&&x.desc.toLowerCase().includes(alvo))||S.pend.find(x=>x.desc.toLowerCase().includes(alvo));
+  let p=S.pend.find(x=>(x.total-x.pago)>0&&x.desc.toLowerCase().includes(alvo))||S.pend.find(x=>x.desc.toLowerCase().includes(alvo));
+  if(!p)p=findPendByName(nome,null);   // busca aproximada (acentos/apóstrofos diferentes)
   if(p){p.pago+=v;logPend(p,v,d);}
 }
 /* acha uma pendência ABERTA parecida com o nome do lançamento (mesma área) */
