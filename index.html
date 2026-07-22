@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- AD Ágape Financeiro — v7.8 (IA é sempre a primeira leitora quando online, regras só offline · chat entende "a abater das pendências" sem nome · apelidos valem no texto digitado) -->
+<!-- AD Ágape Financeiro — v7.9 (aceita forma de pagamento e abate de pendência vindos da IA — pronto para o Apps Script v4 com todas as diretrizes) -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -358,6 +358,12 @@ header .brand{height:40px;width:56px}
   <div class="card" id="chkCard">
     <h2><span class="mi" data-ic="file-check" data-ics="18"></span> Conferidor de integridade</h2>
     <div id="chkBody" class="hint">Verificando…</div>
+  </div>
+  <div class="card">
+    <h2><span class="mi" data-ic="ai" data-ics="18"></span> Diretrizes da IA</h2>
+    <p class="hint">A IA consulta este texto em <b>toda</b> interpretação (requer o Apps Script v4). Escreva aqui como cada detalhe deve ser tratado — ex.: "compras na loja X são sempre da igreja". Edite quando quiser: vale na hora, sem reinstalar nada, e sincroniza entre os aparelhos.</p>
+    <textarea id="cfg-diretrizes" style="min-height:140px" placeholder="Uma diretriz por linha…"></textarea>
+    <div class="row no-print"><button class="btn" id="btnDiretrizes">Salvar diretrizes</button></div>
   </div>
   <div class="card">
     <h2><span class="mi" data-ic="clipboard" data-ics="18"></span> Espelho de modificações</h2>
@@ -1717,7 +1723,12 @@ async function aiParse(text){
       else if(sc&&!(CATS[a][t][cc]||[]).includes(sc))sc='';
       const d=/^\d{4}-\d{2}-\d{2}$/.test(it.d)?it.d:new Date().toISOString().slice(0,10);
       const n=((it.n||'')+'').trim()||cc;
-      return {d,a,t,c:cc,s:sc,n,v:pv(it.v)||0,pendRef:null};
+      // Apps Script v4+: a IA pode devolver a forma de pagamento e o abate de pendência
+      const pay=it.pay==='D'?'D':(it.pay==='C'?'C':null);
+      const pendRef=(typeof it.pendRef==='string'&&it.pendRef.trim())?it.pendRef.trim().slice(0,40):null;
+      const o={d,a,t,c:cc,s:sc,n,v:pv(it.v)||0,pendRef};
+      if(pay)o.pay=pay;
+      return o;
     }).filter(p=>p.v>0);
   }catch(e){return null;}
 }
@@ -2585,7 +2596,7 @@ function showNow(pg){
   if(pg==='mov')renderMov();
   if(pg==='dashI')renderDash('I');
   if(pg==='dashP'){renderConselheiro();renderDash('P');renderPend();const rb=document.getElementById('reservasBox');if(rb)rb.innerHTML=renderReservas();renderAudit();}
-  if(pg==='dados'){renderCheck();renderLog();renderAliases();renderTrash();renderCatMgr();}
+  if(pg==='dados'){renderCheck();renderLog();renderAliases();renderTrash();renderCatMgr();const dz=document.getElementById('cfg-diretrizes');if(dz&&document.activeElement!==dz)dz.value=S.cfg.diretrizes||'';}
 }
 function refresh(){
   migraIni();migraTs();
@@ -2848,6 +2859,13 @@ document.addEventListener('DOMContentLoaded',()=>{
     S.cfg.autoSal=document.getElementById('cfg-autosal').checked;
     S.cfg.ai=document.getElementById('cfg-ai').checked;
     save();alert('Configurações salvas.');
+  };
+  const bDz=document.getElementById('btnDiretrizes');
+  if(bDz)bDz.onclick=()=>{
+    if(!requireEdit())return;
+    S.cfg.diretrizes=(document.getElementById('cfg-diretrizes').value||'').slice(0,4000);
+    logPush('Diretrizes da IA atualizadas pelo dono');
+    save();toast('✅ Diretrizes salvas — a IA já consulta na próxima mensagem');
   };
   document.getElementById('btnReset').onclick=()=>{
     if(!requireEdit())return;
